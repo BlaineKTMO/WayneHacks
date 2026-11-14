@@ -31,7 +31,10 @@ export type Forklift = {
   lastSeen?: number
   path?: Path
   currentTask?: string | null
+  speed?: number
 }
+
+export type LogEntry = { id: number; ts: number; level: 'info' | 'ok' | 'warn' | 'error'; unit?: string; text: string }
 
 export type Task = {
   task_id: string

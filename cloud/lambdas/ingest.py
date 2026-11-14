@@ -5,8 +5,9 @@ The rule SQL adds `forklift_id` (from the topic) and `kind` ("telemetry" | "even
 
 import logging
 
-from common import table, to_ddb
-from fleet_shared.messages import Event, Pose, Telemetry, now_ms
+from common import publish, table, to_ddb
+from fleet_shared import topics
+from fleet_shared.messages import Event, Pose, TaskStatus, Telemetry, now_ms
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -39,9 +40,21 @@ def handler(msg, _ctx):
 
     names = {f"#{k}": k for k in updates}
     values = {f":{k}": v for k, v in to_ddb(updates).items()}
-    table("FORKLIFTS_TABLE").update_item(
+    old = table("FORKLIFTS_TABLE").update_item(
         Key={"forklift_id": fid},
         UpdateExpression="SET " + ", ".join(f"#{k} = :{k}" for k in updates),
         ExpressionAttributeNames=names,
         ExpressionAttributeValues=values,
-    )
+        ReturnValues="UPDATED_OLD",
+    ).get("Attributes", {})
+
+    # Forklift finished: close out the task it was running.
+    task_id = old.get("current_task") if kind == "event" and parsed.type == "done" else None
+    if task_id:
+        table("TASKS_TABLE").update_item(
+            Key={"task_id": task_id},
+            UpdateExpression="SET #s = :s, finished_at = :t",
+            ExpressionAttributeNames={"#s": "status"},
+            ExpressionAttributeValues={":s": "done", ":t": now_ms()},
+        )
+        publish(topics.task_status(task_id), TaskStatus(state="done", assigned_to=fid).to_dict())

@@ -109,6 +109,7 @@ class FleetStack(Stack):
         ingest = fn("Ingest", "ingest.handler")
         forklifts.grant_read_write_data(ingest)
         tasks.grant_read_write_data(ingest)
+        ingest.add_to_role_policy(publish_policy)
 
         planner = fn("RoutePlanner", "route_planner.handler")
         forklifts.grant_read_write_data(planner)
