@@ -12,11 +12,13 @@ import threading
 import serial
 
 from . import config
+from .freewili_link import find_port
 
 
 def main():
-    ser = serial.Serial(config.SERIAL_PORT, config.SERIAL_BAUD, timeout=0.1)
-    print(f"connected to {config.SERIAL_PORT}. Type lines to send.")
+    port = find_port() if config.SERIAL_PORT == "auto" else config.SERIAL_PORT
+    ser = serial.Serial(port, config.SERIAL_BAUD, timeout=0.1)
+    print(f"connected to {port}. Type lines to send.")
 
     def reader():
         while True:

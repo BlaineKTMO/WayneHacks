@@ -29,7 +29,9 @@ HERO_FORKLIFT = "fl-01"       # the one Ring 1 drives
 TAG_HEADING_OFFSET = 0.0
 
 # ---------------------------------------------------------------- Free-WiLi serial link
-SERIAL_PORT = "/dev/tty.usbmodem1101"   # run `ls /dev/tty.usb*` with the Free-WiLi plugged in
+# "auto" finds the Free-WiLi OG main CPU by its USB name. Or set a path by hand
+# (macOS: `ls /dev/tty.usb*`, Linux: `ls /dev/ttyACM*`); the OG shows TWO ports.
+SERIAL_PORT = "auto"
 SERIAL_BAUD = 115200
 COMMAND_RATE_HZ = 20          # how often we send W lines
 LOST_TAG_STOP_S = 0.3         # tag not seen for this long -> send S (stop). Must stop within 0.5 s.

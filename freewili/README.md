@@ -1,39 +1,110 @@
-# Free-WiLi controller
+# Free-WiLi OG forklift controller
 
-The Free-WiLi receives wheel commands from the laptop over USB serial and drives the motor driver.
+The **Free-WiLi OG** drives the forklift's motors through an **L298N**. The edge laptop sends wheel speeds over USB, and the OG turns them into PWM on its breakout header.
 
-**Open question:** which Free-WiLi model the track provides, and how scripts run on it (on-device script vs host-side Python API). Confirm with the Free-WiLi team on day one, then fill in `controller` here.
+```
+laptop (step6_ring1.py) ──USB──► OG main CPU ──header pins──► L298N ──► motors
+      W,<l>,<r> / S,<reason>  ◄──  T,<state>,<battery_v> (1 Hz)
+```
 
-## What the firmware must do (spec)
+The OG has two RP2040 chips:
 
-Text lines over USB serial, 115200 baud, newline-terminated.
+| CPU | Runs | Source |
+|---|---|---|
+| **Main** | USB commands, PWM, 500 ms motor watchdog, telemetry | [`forklift/main/main.c`](forklift/main/main.c) |
+| **Display** | Screen (`fl-01` + state), answers main's breakout requests | [`forklift/display/main.c`](forklift/display/main.c) |
+
+Both are built from one CMake project and flashed as **one UF2**: the main UF2 carries the display image inside it. The board support package is [wiliOGbsp](https://github.com/freewili/wiliOGbsp), pinned as a submodule in `wiliOGbsp/`.
+
+## 1. Wiring
+
+**Before anything else, jumper header pin 6 (3.3 V out) to header pin 4 (`V PINS IN`).** Without a voltage on pin 4, no breakout pin moves at all, and it looks exactly like broken firmware.
+
+| L298N | OG header pin | GPIO | Job |
+|---|---|---|---|
+| ENA | 9 | 8 | Left speed (PWM) |
+| IN1 | 3 | 27 | Left direction |
+| IN2 | 1 | 13 | Left direction |
+| ENB | 11 | 11 | Right speed (PWM) |
+| IN3 | 15 | 14 | Right direction |
+| IN4 | 13 | 15 | Right direction |
+| GND | any GND | | **Common ground with the motor battery** |
+
+- **Remove the ENA and ENB jumpers** on the L298N, or the motors ignore the speed signal and run flat out.
+- Motor battery goes to the L298N's `12V` terminal, never through the Free-WiLi. Leave the L298N's 5 V regulator jumper on so it powers its own logic. Use a 2S LiPo (7.4 V) or 6×AA: the L298N loses about 2 V, so 4×AA leaves small motors weak.
+- 3.3 V logic from the OG is enough for the L298N's inputs (it needs 2.3 V for a high).
+- Header pins 4 and 6 are only the I/O supply. Nothing else connects to them.
+
+These six pins are already outputs in the board's default setup, so the firmware never changes a pin's direction. That BSP path has never been tested on hardware, and we avoid it on purpose.
+
+## 2. Install the toolchain (once)
+
+1. In VS Code, install the **Raspberry Pi Pico** extension.
+2. Use it to install **Pico SDK 2.3.0**. It downloads the SDK, the ARM toolchain (`15_2_Rel1`) and Ninja into `~/.pico-sdk/`. The BSP expects exactly that layout.
+3. From the repo root, fetch the BSP. Its `fw` tool only needs pyserial, which `uv sync --group edge` already installed:
+
+```bash
+git submodule update --init
+```
+
+## 3. Build
+
+```bash
+cd freewili/forklift
+cmake --preset target-posix          # `target` on Windows
+cmake --build build
+```
+
+Output: `build/forklift_main.uf2`. It already contains the display firmware.
+
+## 4. Flash
+
+From the repo root:
+
+```bash
+# Once per board: the display CPU's serial bootloader
+uv run python freewili/wiliOGbsp/tools/fw.py bootloader
+
+# Every time you change the firmware
+uv run python freewili/wiliOGbsp/tools/fw.py flash forklift --uf2 freewili/forklift/build/forklift_main.uf2
+```
+
+`fw flash` finds the main CPU over USB, reboots it into BOOTSEL (no button needed) and copies the UF2. The display CPU updates itself from the main UF2 on the next boot.
+
+Rules from the BSP worth knowing (details in [wiliOGbsp/AGENTS.md](wiliOGbsp/AGENTS.md)):
+
+- **Never copy a UF2 to the display CPU.** It takes the display CPU off USB, and it has no BOOTSEL button to recover.
+- Put only one CPU in BOOTSEL at a time.
+
+## 5. Bring-up, in order
+
+| Step | Do | Pass when |
+|---|---|---|
+| 1 | Power on, no motors connected | Screen shows `fl-01` and `IDLE`. `FAULT` means main couldn't take over the direction pins (see below). |
+| 2 | `uv run python -m fleet_edge.step5_serial_monitor` | `T,IDLE,0.00` arrives every second |
+| 3 | Type `W,40,40` | Screen says `DRIVING`. A multimeter on header pin 9 reads about 40% of 3.3 V (≈1.3 V). After 0.5 s with no new line, it drops to `STOPPED`. |
+| 4 | Connect the L298N + motors, wheels in the air, `uv run python -m fleet_edge.step4_motors` | w/a/s/d drive the right wheels in the right directions |
+| 5 | Unplug USB while driving | Motors stop within 0.5 s |
+
+Step 3 matters: **PWM through the OG's level shifters hasn't been tested on hardware by anyone yet.** If header pin 9 reads 0 V or 3.3 V regardless of speed, PWM isn't getting through. Stop and tell the cloud lead.
+
+## Serial protocol
+
+Text lines over USB, newline-terminated. The baud rate is ignored, except that **1200 baud reboots the main CPU into BOOTSEL**, so never open the port at 1200.
 
 | Receive | Do |
 |---|---|
-| `W,<left>,<right>` | Set wheel speeds, -100..100. Map to PWM duty + direction pins on the motor driver. Reset the watchdog. |
-| `S,<reason>` | Motors off immediately. Show `STOPPED` + reason on the display. |
+| `W,<left>,<right>` | Wheel speeds -100..100. `0` brakes that wheel. Feeds the watchdog. |
+| `S,<reason>` | Both motors off (coast) immediately. State `STOPPED`. |
+| anything else | Ignored. Does **not** feed the watchdog. |
 
 | Send | When |
 |---|---|
-| `T,<state>,<battery_v>` | Once per second. `state` is one of `IDLE`, `DRIVING`, `BLOCKED`, `STOPPED`, `FAULT`. |
+| `T,<state>,<battery_v>` | Once per second. `state`: `IDLE`, `DRIVING`, `STOPPED`, `FAULT`. `battery_v` is always `0.00`: the OG can't measure the motor battery. |
+| `[forklift] ...` | Debug messages. The laptop ignores them. |
 
-**Watchdog (required):** if no `W` line arrives for **500 ms**, motors off and state `STOPPED`. This is what makes unplugging the laptop safe.
+**Watchdog:** no valid `W` or `S` line for **500 ms** → motors off, state `STOPPED`. The next `W` line resumes driving.
 
-**Display:** show the forklift ID (`fl-01`), state and battery so it reads on camera.
+**`FAULT`:** the main CPU couldn't confirm the FPGA's configuration window is closed, so it won't drive the direction pins on header pins 1, 13 and 15. The motors stay off, and it retries every second. Usual cause: the display CPU isn't running the forklift display app. Reflash.
 
-## Wiring (TB6612 example)
-
-| Free-WiLi | TB6612 | Notes |
-|---|---|---|
-| PWM pin A | PWMA | Left motor speed |
-| GPIO | AIN1 / AIN2 | Left direction |
-| PWM pin B | PWMB | Right motor speed |
-| GPIO | BIN1 / BIN2 | Right direction |
-| GPIO (high) | STBY | Driver enable |
-| GND | GND | **Common ground with motor battery** |
-
-Motor battery goes to VM, never through the Free-WiLi.
-
-## Testing
-
-`uv run python -m fleet_edge.step5_serial_monitor` lets you type `W,40,40` by hand and see the `T` lines coming back. Get this working before step 4.
+Unit tests for the protocol logic run on the laptop with no hardware: `uv run pytest freewili`.

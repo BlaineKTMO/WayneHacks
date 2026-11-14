@@ -47,9 +47,27 @@ def parse_line(line: str) -> FreeWiliTelemetry | None:
     return None
 
 
+MAIN_CPU_PRODUCT = "FWOG main forklift"   # USB product string set by freewili/forklift firmware
+
+
+def find_port(product: str = MAIN_CPU_PRODUCT) -> str:
+    """Find the Free-WiLi OG main CPU. The OG shows up as TWO serial ports (main and
+    display CPU); only the main CPU drives the motors."""
+    from serial.tools import list_ports
+    ports = list(list_ports.comports())
+    for p in ports:
+        if p.product and product in p.product:
+            return p.device
+    seen = ", ".join(f"{p.device} ({p.product})" for p in ports) or "none"
+    raise RuntimeError(f"no serial port with product '{product}'. Is the forklift "
+                       f"firmware flashed and the Free-WiLi on? Ports seen: {seen}")
+
+
 class SerialLink:
     def __init__(self, port: str = config.SERIAL_PORT, baud: int = config.SERIAL_BAUD):
         import serial  # pyserial
+        if port == "auto":
+            port = find_port()
         self.ser = serial.Serial(port, baud, timeout=0)
         self._buf = b""
         self.last_telemetry: FreeWiliTelemetry | None = None

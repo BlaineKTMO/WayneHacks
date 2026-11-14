@@ -50,6 +50,8 @@ Do these in order. Don't move on until the step's check passes.
 | **5. Serial debug** | `uv run python -m fleet_edge.step5_serial_monitor` | Only when step 4 doesn't work: shows exactly what the Free-WiLi sends and receives. |
 | **6. Ring 1** | `uv run python -m fleet_edge.step6_ring1` | SPACE to go. 3 clean laps. Cover the tag → stops. **Record a backup video.** |
 
+**Before step 4:** the Free-WiLi OG needs the forklift firmware and the L298N wired. Follow [freewili/README.md](../freewili/README.md) sections 1–5 first.
+
 ### Printing tags
 
 - Family **tag36h11**. Download PNGs from https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag36h11
@@ -59,7 +61,7 @@ Do these in order. Don't move on until the step's check passes.
 
 ### Finding the Free-WiLi port
 
-Plug it in, then run `ls /dev/tty.usb*`. Put the result in `SERIAL_PORT` in `config.py`.
+Nothing to do: `SERIAL_PORT = "auto"` finds the OG main CPU by name. If that fails, the error lists the ports it saw. Put the right one in `SERIAL_PORT` in `config.py`.
 
 ## 3. When something goes wrong
 

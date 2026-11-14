@@ -1,0 +1,98 @@
+/* Forklift display: Free-WiLi OG display CPU.
+ *
+ * Two jobs:
+ *   1. Service main's breakout I/O requests over the inter-CPU link. REQUIRED:
+ *      without this, main cannot close IO_CONFIG and the motors stay in FAULT.
+ *   2. Show the forklift ID and state big enough to read on the demo camera.
+ *
+ * Red held 6 s powers the board off (BSP default power policy).
+ */
+#include "fwog_display.h"
+#include "pico/stdlib.h"
+
+#include <stdio.h>
+
+FWOG_POWER_DEFAULT();
+
+#define FORKLIFT_ID "fl-01"
+#define MSG_FORKLIFT_STATUS 0x40u   /* keep in step with forklift/main/main.c */
+#define MAIN_SILENT_MS 3000u        /* main sends status every second */
+
+/* Same order as fl_state_t in main/motor_proto.h. */
+static const char *const STATE_NAMES[] = {"IDLE", "DRIVING", "BLOCKED", "STOPPED", "FAULT"};
+#define N_STATES (sizeof STATE_NAMES / sizeof STATE_NAMES[0])
+
+static fwog_link_rx_t s_link_rx;    /* ~4 KB: static, never on the stack */
+static bool s_lcd_ready;
+
+static uint16_t state_colour(int s) {
+    switch (s) {
+    case 0:  return st7789_rgb565(255, 255, 255);  /* IDLE white */
+    case 1:  return st7789_rgb565(0, 255, 0);      /* DRIVING green */
+    case 2:  return st7789_rgb565(255, 255, 0);    /* BLOCKED yellow */
+    case 3:  return st7789_rgb565(255, 128, 0);    /* STOPPED orange */
+    default: return st7789_rgb565(255, 0, 0);      /* FAULT / unknown red */
+    }
+}
+
+static void draw_state(const char *text, uint16_t colour) {
+    if (!s_lcd_ready) return;
+    lcd_text_draw_padded(8u, 140u, text, 9u, 3u, colour, 0x0000u);
+}
+
+int main(void) {
+    board_init();
+
+    /* The bootloader deinits the link before jumping here; bring it back up. */
+    const bool link_up = fwog_link_uart_init(FWOG_LINK_BAUD);
+    fwog_link_rx_init(&s_link_rx);
+    fwog_buttons_init();
+
+    /* Bounded: st7789 init can stall forever if clk_peri is wrong, and this CPU
+       has no watchdog to recover from a spin. */
+    st7789_init_begin();
+    const absolute_time_t lcd_deadline = make_timeout_time_ms(500);
+    while (!st7789_ready() && !time_reached(lcd_deadline)) st7789_init_step();
+    s_lcd_ready = st7789_ready();
+    if (s_lcd_ready) {
+        st7789_clear(0x0000u);
+        st7789_dma_wait();
+        board_backlight(255);
+        lcd_text_draw_padded(8u, 40u, FORKLIFT_ID, 9u, 5u, 0xFFFFu, 0x0000u);
+        draw_state(link_up ? "WAITING" : "NO LINK", state_colour(link_up ? 0 : 4));
+    }
+
+    int shown = -1;
+    absolute_time_t last_status = get_absolute_time();
+    bool silent_shown = false;
+
+    while (true) {
+        fwog_power_poll(to_ms_since_boot(get_absolute_time()));
+
+        uint8_t b;
+        while (link_up && fwog_link_uart_read(&b)) {
+            size_t len = 0u;
+            if (!fwog_link_rx_byte(&s_link_rx, b, &len)) continue;
+            if (fwog_ioexp_link_handle(s_link_rx.buf, len)) continue;   /* breakout I/O, acked */
+            if (len >= 2u && s_link_rx.buf[0] == MSG_FORKLIFT_STATUS) {
+                const int s = s_link_rx.buf[1];
+                last_status = get_absolute_time();
+                silent_shown = false;
+                if (s != shown) {
+                    shown = s;
+                    draw_state((s >= 0 && (size_t)s < N_STATES) ? STATE_NAMES[s] : "???",
+                               state_colour(s));
+                }
+            }
+        }
+
+        if (!silent_shown &&
+            absolute_time_diff_us(last_status, get_absolute_time()) > (int64_t)MAIN_SILENT_MS * 1000) {
+            draw_state("NO MAIN", state_colour(4));
+            shown = -1;
+            silent_shown = true;
+        }
+
+        sleep_ms(2);   /* poll fast: the power-button debouncer needs it */
+    }
+}
