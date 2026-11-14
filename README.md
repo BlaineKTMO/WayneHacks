@@ -14,7 +14,7 @@ Ceiling cameras localize every forklift, the cloud plans routes and turns plain 
 | `dashboard/` | Cloud lead | Amplify React live map + command box | Next |
 | `mlops/` | Cloud lead | Simulator, eval set, planner pipeline | Ring 5 |
 
-**Hardware lead: start at [edge/START_HERE.md](edge/START_HERE.md).**
+**Hardware lead: start at [edge/START_HERE.md](edge/START_HERE.md).** All interfaces: [docs/API.md](docs/API.md).
 
 ## Setup
 
