@@ -1,0 +1,72 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #2a2f3a;
+  --text: #e6e8ee;
+  --muted: #8b93a7;
+  --accent: #22c55e;
+  --danger: #ef4444;
+  --warn: #f59e0b;
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid var(--line); background: #232838; color: var(--text); padding: 6px 12px; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.ghost { background: transparent; }
+input { font: inherit; background: #0b0d11; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; flex: 1; min-width: 0; }
+.muted { color: var(--muted); }
+
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); }
+header h1 { font-size: 17px; margin: 0; }
+.spacer { flex: 1; }
+.conn { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #333; }
+.conn-live { background: #14532d; color: #86efac; }
+.conn-offline { background: #450a0a; color: #fca5a5; }
+.error { background: #450a0a; color: #fecaca; padding: 8px 16px; font-size: 14px; }
+
+main { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; flex: 1; }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+.map-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; min-width: 0; }
+.hint { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+.placeholder { padding: 40px; text-align: center; color: var(--muted); }
+
+.map { width: 100%; height: auto; display: block; }
+.map .floor { fill: #0b0d11; stroke: var(--line); stroke-width: .004; }
+.map .edge { stroke: #3b4252; stroke-width: .012; stroke-linecap: round; }
+.map .path { fill: none; stroke-width: .014; stroke-dasharray: .03 .015; stroke-linecap: round; opacity: .9; }
+.map .node { cursor: pointer; }
+.map .node circle, .map .node rect:first-of-type { fill: #1f2430; stroke: #6b7280; stroke-width: .004; }
+.map .node-dock rect:first-of-type { stroke: #22c55e; }
+.map .node-slot rect:first-of-type { stroke: #a78bfa; }
+.map .node:hover circle, .map .node:hover rect:first-of-type { fill: #374151; }
+.map .node text { font-size: .03px; fill: var(--muted); pointer-events: none; }
+.map .pallet { fill: #b45309; stroke: #fbbf24; stroke-width: .003; }
+.map .forklift .halo { fill: none; stroke: transparent; stroke-width: .006; }
+.map .forklift.selected .halo { stroke: #fff; }
+.map .forklift.stale { opacity: .35; }
+
+aside { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 10px 0 0; }
+.command label { font-size: 13px; color: var(--muted); }
+.command .row { display: flex; gap: 8px; margin-top: 6px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.card.selected { border-color: #6b7280; }
+.card-head { display: flex; align-items: center; gap: 8px; }
+.card-body { font-size: 13px; margin-top: 4px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.state { font-size: 12px; margin-left: auto; color: var(--muted); }
+.state-DRIVING { color: var(--accent); }
+.state-BLOCKED { color: var(--warn); }
+.state-STOPPED, .state-FAULT { color: var(--danger); }
+.stop { background: #7f1d1d; border-color: #991b1b; padding: 3px 10px; font-size: 12px; }
+.tasks { list-style: none; padding: 0; margin: 0; font-size: 14px; }
+.tasks li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.task-text { margin-left: 6px; }
+.task-error { color: #fca5a5; font-size: 12px; margin-top: 2px; }
+.badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #2a2f3a; }
+.badge-running { background: #14532d; color: #86efac; }
+.badge-failed { background: #450a0a; color: #fca5a5; }
+.badge-received { background: #1e3a5f; color: #93c5fd; }

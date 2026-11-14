@@ -22,6 +22,8 @@ from aws_cdk import (
 )
 from constructs import Construct
 
+from .dashboard import Dashboard
+
 
 class FleetStack(Stack):
     def __init__(self, scope: Construct, cid: str, *, lambda_code_dir: str, **kw):
@@ -125,6 +127,12 @@ class FleetStack(Stack):
             actions=["bedrock:InvokeModel", "bedrock:Converse"],
             resources=["*"],
         ))
+
+        api = fn("Api", "api.handler")
+        for t in (forklifts, tasks, pallets, edge_locks, planners):
+            t.grant_read_data(api)
+        api.add_to_role_policy(publish_policy)
+        Dashboard(self, "Dashboard", api_fn=api)
 
         # ---------------- IoT rules ----------------------------------------------
         rule_errors = logs.LogGroup(self, "IotRuleErrors",

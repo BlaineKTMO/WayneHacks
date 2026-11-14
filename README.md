@@ -11,7 +11,7 @@ Ceiling cameras localize every forklift, the cloud plans routes and turns plain 
 | [`shared/`](shared/) | Both | MQTT topics, message types, `warehouse.json`, A* | Done, tested |
 | [`cloud/`](cloud/) | Cloud lead | CDK: DynamoDB, S3, IoT rules, Lambdas | Ring 2 deployed |
 | [`tools/`](tools/) | Both | `fake_fleet.py`: poke the cloud without hardware | Done |
-| `dashboard/` | Cloud lead | Amplify React live map + command box | Next |
+| [`dashboard/`](dashboard/) | Cloud lead | React live map, click-to-goto, command box (Amplify Hosting) | Live |
 | `mlops/` | Cloud lead | Simulator, eval set, planner pipeline | Ring 5 |
 
 **Hardware lead: start at [edge/START_HERE.md](edge/START_HERE.md).** All interfaces: [docs/API.md](docs/API.md).
@@ -40,6 +40,20 @@ Try it with no hardware:
 uv run python tools/fake_fleet.py telemetry fl-01 --node dock_A
 uv run python tools/fake_fleet.py goto fl-01 slot_A3     # planner publishes fleet/fl-01/path
 uv run python tools/fake_fleet.py status fl-01
+```
+
+Fake forklifts that drive routes on the real cloud (no hardware):
+
+```bash
+uv run python tools/sim_fleet.py                         # leave running
+```
+
+### Dashboard
+
+```bash
+uv run python cloud/scripts/add_user.py you@example.com  # invite (self sign-up is off)
+uv run python dashboard/deploy.py                        # build + publish to Amplify
+uv run python dashboard/deploy.py --local && cd dashboard && npm run dev   # local dev
 ```
 
 Watch messages live: AWS console → IoT Core → MQTT test client → subscribe to `#`.
