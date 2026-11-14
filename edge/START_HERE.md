@@ -1,0 +1,83 @@
+# Edge + Forklift: start here
+
+You're building **Ring 1**: one toy forklift drives a 4-point loop by itself. A ceiling webcam sees AprilTags, this laptop works out where the forklift is, and the Free-WiLi drives the motors. No internet needed.
+
+**Done when:** the forklift drives the loop 3 times in a row on its own, and stops within half a second when you cover its tag with your hand.
+
+You don't need to write much code. Most of the work is the physical setup and tuning numbers in **one file: [`fleet_edge/config.py`](fleet_edge/config.py)**.
+
+---
+
+## 0. One-time setup (10 min)
+
+Open **Terminal** and paste these one at a time:
+
+```bash
+# Install uv (the Python tool we use). Skip if `uv --version` already works.
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Get the code (ask the cloud lead to add your GitHub account first)
+git clone <repo-url> WayneHacks
+cd WayneHacks
+
+# Install everything the edge needs
+uv sync --group edge --group dev
+
+# Check it all works: should end with "passed"
+uv run pytest edge shared
+```
+
+**Every command below is run from the `WayneHacks` folder.** If you see `No module named fleet_edge`, you're in the wrong folder; `cd` back to `WayneHacks`.
+
+## 1. Watch it work in simulation first (5 min)
+
+```bash
+uv run python -m fleet_edge.step6_ring1 --sim
+```
+
+A window opens with a green arrow (the forklift) and 4 blue dots (the waypoints). Click the window, press **SPACE**. The arrow drives the loop. This is what the real one should do. Press **q** to quit.
+
+## 2. The real thing, step by step
+
+Do these in order. Don't move on until the step's check passes.
+
+| Step | Command | Check |
+|---|---|---|
+| **1. Camera** | `uv run python -m fleet_edge.step1_camera` | Whole table visible, camera straight down, sharp. Tape the mount so it **never moves**. |
+| **2. Lens calibration** | `uv run python -m fleet_edge.step2_calibrate` | Prints `reprojection error` under 1.0. Creates `edge/calibration/camera.npz`. |
+| **3. Tags** | `uv run python -m fleet_edge.step3_tags` | Says `map OK`. Put the forklift tag on a ruler-measured spot: screen matches within 1 cm. Arrow points the way the forklift faces (if not, fix `TAG_HEADING_OFFSET`). |
+| **4. Motors** | `uv run python -m fleet_edge.step4_motors` | w/a/s/d drives the forklift. Find the lowest speed that moves it, put it in `MIN_SPEED`. Unplug USB while driving → stops within 0.5 s. |
+| **5. Serial debug** | `uv run python -m fleet_edge.step5_serial_monitor` | Only when step 4 doesn't work: shows exactly what the Free-WiLi sends and receives. |
+| **6. Ring 1** | `uv run python -m fleet_edge.step6_ring1` | SPACE to go. 3 clean laps. Cover the tag → stops. **Record a backup video.** |
+
+### Printing tags
+
+- Family **tag36h11**. Download PNGs from https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag36h11
+- Corner tags: IDs **0, 1, 2, 3** at the table corners, matching `CORNER_TAGS` in `config.py`. Measure where you actually put them and update the numbers.
+- Forklift tag: ID **10** (= `fl-01`). Second forklift: ID **11**.
+- Print at 100% scale, about 6 cm black square. Measure and set `TAG_SIZE_M`. Matte paper; glossy reflects the lights.
+
+### Finding the Free-WiLi port
+
+Plug it in, then run `ls /dev/tty.usb*`. Put the result in `SERIAL_PORT` in `config.py`.
+
+## 3. When something goes wrong
+
+| Symptom | Try |
+|---|---|
+| Camera window is your face | `CAMERA_INDEX = 1` in config |
+| `need 4 corner tags` | More light (desk lamp), bigger tags, check IDs are 0–3 |
+| Position jumps around | Lower `POSE_ALPHA` (e.g. 0.4) |
+| Forklift wobbles / zig-zags | Raise `LOOKAHEAD_M` (0.10–0.15), lower `MAX_SPEED` |
+| Spins forever at a waypoint | Raise `ARRIVE_RADIUS_M` to 0.05; check heading arrow direction in step 3 |
+| Drives the wrong way | Swap the motor wires on that side, or swap left/right in the Free-WiLi firmware |
+| Doesn't move at low speed | `MIN_SPEED` too low: redo the deadband test |
+| `Permission denied` / port busy | Close any other program using the Free-WiLi (including step 5) |
+
+Each run of step 6 writes `edge/logs/ring1.csv` (time, position, wheel commands). Send it to the cloud lead if you're stuck.
+
+## 4. Using an AI assistant (Kiro / Claude) on this
+
+It helps to say: *"Read edge/START_HERE.md and edge/fleet_edge/config.py. I'm on step N and here's what happens: …"* and paste the terminal output. Ask it to **only change `config.py`** unless you really need code changes; the protocol and file layout are shared with the cloud side.
+
+**Don't change** `shared/` or the serial protocol (`W`, `S`, `T` lines) without telling the cloud lead.

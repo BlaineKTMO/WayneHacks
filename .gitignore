@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+cdk.out/
+cloud/build/
+node_modules/
+dist/
+.DS_Store
+
+# Device certificates and secrets: NEVER commit
+edge/certs/
+*.pem.key
+*.private.key
+
+# Recorded data
+edge/logs/
+*.mp4
