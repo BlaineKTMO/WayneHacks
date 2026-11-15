@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = []
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pycognito>=2024.5"]
 cloud = [
   "aws-cdk-lib==2.220.0",
   "constructs>=10.4,<11",
