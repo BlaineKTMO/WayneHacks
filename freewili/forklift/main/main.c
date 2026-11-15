@@ -23,9 +23,10 @@
  *
  * Header pin 4 (V PINS IN) must be powered (jumper hdr 6 -> hdr 4) or no pin moves.
  *
- * Commands arrive over USB serial OR over WiFi: a Bottlenose (ESP32-C6) on the Qwiic /
- * breakout I2C pins (hdr 10 SDA, hdr 8 SCL) relays the same text lines (wifi_link.h).
- * Both feed the same parser and the same 500 ms watchdog; telemetry goes to both.
+ * Commands arrive over USB serial, over WiFi (a Bottlenose ESP32-C6 on the Qwiic /
+ * breakout I2C pins hdr 10 SDA / hdr 8 SCL relays the same text lines, wifi_link.h), or
+ * over RADIO from a base-station OG on the laptop (CC1101, 915 MHz, rf_link.h).
+ * All three feed the same parser and the same 500 ms watchdog; telemetry goes to all.
  */
 #include "fwog_main.h"
 #include "hardware/clocks.h"
@@ -36,6 +37,8 @@
 #include <stdio.h>
 
 #include "motor_proto.h"
+#include "rf_link.h"
+#include "rf_proto.h"
 #include "wifi_link.h"
 
 #include <string.h>
@@ -77,6 +80,11 @@ static bool s_wheels_moving;
 static bool s_fork_moving;
 static absolute_time_t s_fork_until;
 static char s_ip[IP_TEXT_MAX + 1];   /* last "I,<ip>" from the WiFi module, "" if none */
+#define RF_RETRY_MS 2000u
+#define RF_QUIET_MS 200u     /* no radio command this long: base is idle-listening */
+#define RF_REPLY_GAP_MS 5u   /* after a command, before replying: the base is back in RX */
+static bool s_rf_telem_due;          /* telemetry waiting for a free slot on the air */
+static uint8_t s_rf_seq;
 
 static void pwm_pin_init(unsigned gpio) {
     const unsigned slice = pwm_gpio_to_slice_num(gpio);
@@ -180,6 +188,20 @@ static void send_telemetry(void) {
     fwrite(buf, 1, n, stdout);
     fflush(stdout);
     wifi_link_send(buf, n);
+    s_rf_telem_due = true;   /* sent from the main loop in the next free radio slot */
+}
+
+/* Telemetry back to the base. Sent right after a command arrives (the base switches to
+   receive the moment it finishes sending, and the next command is ~50 ms away), or on
+   its own when commands have stopped, so the two ends never transmit over each other. */
+static void rf_send_telemetry(void) {
+    char line[32];
+    size_t n = proto_format_telemetry(line, sizeof line, s_state, BATTERY_V_UNKNOWN);
+    if (n && line[n - 1] == '\n') line[n - 1] = '\0';
+    uint8_t pkt[RF_PAYLOAD_LEN];
+    if (rf_pack(pkt, RF_KIND_TELEM, RF_FORKLIFT_ID, s_rf_seq++, line))
+        (void)rf_link_send(pkt, RF_PAYLOAD_LEN);
+    s_rf_telem_due = false;
 }
 
 /* Close the FPGA's IO_CONFIG window, then claim the SPI-group pins and the fork's
@@ -205,6 +227,17 @@ static void try_io_ready(void) {
 }
 
 static void handle_line(const char *line, absolute_time_t *last_cmd) {
+    if (line[0] == '?' && (line[1] == '0' || line[1] == '1') && line[2] == '\0') {
+        rf_link_select(line[1] - '0');           /* diagnostics: pick radio CS0/CS1 */
+        return;
+    }
+    if (line[0] == '?' && line[1] == '\0') {   /* radio diagnostics (USB only) */
+        char r[200];
+        rf_link_report(r, sizeof r);
+        fputs(r, stdout);
+        fflush(stdout);
+        return;
+    }
     if (line[0] == 'I' && line[1] == ',') {    /* WiFi module's IP: show it, not a command */
         strncpy(s_ip, line + 2, IP_TEXT_MAX);
         s_ip[IP_TEXT_MAX] = '\0';
@@ -263,6 +296,8 @@ int main(void) {
     absolute_time_t last_cmd = get_absolute_time();
     absolute_time_t next_telemetry = make_timeout_time_ms(TELEMETRY_MS);
     absolute_time_t next_retry = make_timeout_time_ms(CONFIG_RETRY_MS);
+    absolute_time_t next_rf_retry = get_absolute_time();
+    absolute_time_t last_rf_cmd = nil_time;
 
     while (true) {
         board_watchdog_kick();
@@ -274,6 +309,30 @@ int main(void) {
         char wc;
         while (wifi_link_getc(&wc)) {
             if (line_rx_feed(&wifi_rx, wc)) handle_line(wifi_rx.buf, &last_cmd);
+        }
+
+        /* Radio: only once the display has answered (s_io_ready), which means it has
+           already switched the antenna paths to 900 MHz. */
+        if (s_io_ready && !rf_link_ok() && time_reached(next_rf_retry)) {
+            next_rf_retry = make_timeout_time_ms(RF_RETRY_MS);
+            (void)rf_link_init();
+        }
+        uint8_t pkt[RF_PAYLOAD_LEN];
+        char rf_line[RF_TEXT_MAX + 1];
+        bool rf_cmd_now = false;
+        if (rf_link_poll(pkt, sizeof pkt, NULL) == (int)RF_PAYLOAD_LEN &&
+            rf_unpack(pkt, RF_PAYLOAD_LEN, RF_KIND_CMD, RF_FORKLIFT_ID, rf_line, NULL)) {
+            handle_line(rf_line, &last_cmd);
+            last_rf_cmd = get_absolute_time();
+            rf_cmd_now = true;
+        }
+        /* Reply slot: wait RF_REPLY_GAP_MS after a command so the base (which needs
+           ~1 ms to recalibrate and get back into RX after sending) is listening. */
+        if (rf_cmd_now && s_rf_telem_due) sleep_ms(RF_REPLY_GAP_MS);
+        if (s_rf_telem_due && rf_link_ok() &&
+            (rf_cmd_now || is_nil_time(last_rf_cmd) ||
+             absolute_time_diff_us(last_rf_cmd, get_absolute_time()) > (int64_t)RF_QUIET_MS * 1000)) {
+            rf_send_telemetry();
         }
 
         if (s_fork_moving && time_reached(s_fork_until)) {

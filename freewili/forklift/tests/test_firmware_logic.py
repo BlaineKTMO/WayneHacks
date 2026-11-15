@@ -16,7 +16,8 @@ def test_motor_proto(tmp_path):
     subprocess.run(
         [CC, "-std=c11", "-Wall", "-Wextra", "-Werror", "-o", str(exe),
          str(HERE / "test_motor_proto.c"), str(HERE.parent / "main" / "motor_proto.c"),
-         str(HERE.parent / "main" / "byte_ring.c")],
+         str(HERE.parent / "main" / "byte_ring.c"),
+         str(HERE.parent / "main" / "rf_proto.c")],
         check=True,
     )
     result = subprocess.run([str(exe)], capture_output=True, text=True)

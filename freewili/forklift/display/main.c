@@ -17,14 +17,20 @@ FWOG_POWER_DEFAULT();
 
 /* Upper case on screen only: in this font a lowercase l reads as a 1. The ID
  * everywhere else (MQTT, DynamoDB, dashboard) stays "fl-01". */
+#ifdef BASE_STATION
+#define FORKLIFT_ID "BASE"          /* radio base station: shows the forklift's state */
+#else
 #define FORKLIFT_ID "FL-01"
+#endif
 #define MSG_FORKLIFT_STATUS 0x40u   /* keep in step with forklift/main/main.c */
 #define MSG_FORKLIFT_IP 0x41u       /* [0x41, ascii IP]: the WiFi module's address */
 #define IP_MAX 20u
 #define MAIN_SILENT_MS 3000u        /* main sends status every second */
 
 /* Same order as fl_state_t in main/motor_proto.h. */
-static const char *const STATE_NAMES[] = {"IDLE", "DRIVING", "BLOCKED", "STOPPED", "FAULT"};
+/* Index 5 is the base station's own: nothing heard from the forklift over the radio. */
+static const char *const STATE_NAMES[] = {"IDLE", "DRIVING", "BLOCKED", "STOPPED", "FAULT",
+                                          "NO RADIO"};
 #define N_STATES (sizeof STATE_NAMES / sizeof STATE_NAMES[0])
 
 static fwog_link_rx_t s_link_rx;    /* ~4 KB: static, never on the stack */
@@ -61,6 +67,15 @@ int main(void) {
     const bool link_up = fwog_link_uart_init(FWOG_LINK_BAUD);
     fwog_link_rx_init(&s_link_rx);
     fwog_buttons_init();
+
+    /* Both CC1101s use the 915 MHz band (main/rf_link.h): switch their antenna paths
+       from the 400 MHz default BEFORE main may transmit. main only starts the radio
+       after this app answers on the link, which is below. */
+    #ifdef RF_TEST_433
+    (void)fwog_ioexp_link_set_antennas(FWOG_ANT_400MHZ, FWOG_ANT_400MHZ);   /* diagnostic build */
+#else
+    (void)fwog_ioexp_link_set_antennas(FWOG_ANT_900MHZ, FWOG_ANT_900MHZ);
+#endif
 
     /* The OG runs on its internal battery and charges it from USB. Same charger setup
        the stock firmware and the BSP's bench app do (enable charging, ADC on, charger

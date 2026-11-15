@@ -56,19 +56,22 @@ def parse_line(line: str) -> FreeWiliTelemetry | None:
 
 
 MAIN_CPU_PRODUCT = "FWOG main forklift"   # USB product string set by freewili/forklift firmware
+RADIO_BASE_PRODUCT = "FWOG main flbase"    # the radio base station OG (same lines, over 915 MHz)
 
 
-def find_port(product: str = MAIN_CPU_PRODUCT) -> str:
-    """Find the Free-WiLi OG main CPU. The OG shows up as TWO serial ports (main and
-    display CPU); only the main CPU drives the motors."""
+def find_port(products: tuple[str, ...] = (MAIN_CPU_PRODUCT, RADIO_BASE_PRODUCT)) -> str:
+    """Find the OG to talk to: the forklift itself on USB if it's plugged in, otherwise
+    the radio base station (it relays the same lines). Each OG shows up as TWO serial
+    ports (main and display CPU); only the main CPU's is the right one."""
     from serial.tools import list_ports
     ports = list(list_ports.comports())
-    for p in ports:
-        if p.product and product in p.product:
-            return p.device
+    for product in products:
+        for p in ports:
+            if p.product and product in p.product:
+                return p.device
     seen = ", ".join(f"{p.device} ({p.product})" for p in ports) or "none"
-    raise RuntimeError(f"no serial port with product '{product}'. Is the forklift "
-                       f"firmware flashed and the Free-WiLi on? Ports seen: {seen}")
+    raise RuntimeError(f"no forklift or radio base on USB (looked for {', '.join(products)}). "
+                       f"Firmware flashed and the Free-WiLi on? Ports seen: {seen}")
 
 
 class SerialLink:

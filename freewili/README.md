@@ -1,6 +1,6 @@
 # Free-WiLi OG forklift controller
 
-The **Free-WiLi OG** drives the forklift: **4-wheel skid-steer drive plus a fork motor**, through **three L298N** drivers. The edge laptop sends commands over USB, or over WiFi through a [Bottlenose](bottlenose/README.md) on the Qwiic pins, and the OG turns them into PWM on its breakout header.
+The **Free-WiLi OG** drives the forklift: **4-wheel skid-steer drive plus a fork motor**, through **three L298N** drivers. The edge laptop sends commands over USB, over **radio** through a second OG used as a base station (below), or over WiFi through a [Bottlenose](bottlenose/README.md) on the Qwiic pins. The OG turns them into PWM on its breakout header.
 
 ```
 laptop ──USB──► OG main CPU ──6 header pins──► L298N 1 (front axle) ─► FL, FR motors
@@ -119,6 +119,39 @@ Rules from the BSP worth knowing (details in [wiliOGbsp/AGENTS.md](wiliOGbsp/AGE
 | 6 | Unplug USB while driving | Everything stops within 0.5 s |
 
 Step 3 matters: **PWM through the OG's level shifters hasn't been tested on hardware by anyone yet.** If header pin 9 reads 0 V or 3.3 V regardless of speed, PWM isn't getting through. Stop and tell the cloud lead.
+
+## Radio: drive without a cable
+
+A **second Free-WiLi OG** plugged into the laptop acts as a radio base station. It relays the same lines to the forklift over the OG's built-in CC1101 radio. You don't need extra hardware, a network or any wiring on the forklift.
+
+```
+laptop ──USB──► base OG ~~~ 915 MHz CC1101 ~~~► forklift OG ──► motors
+       ◄─ T ──          ◄~~~ telemetry ~~~~~
+```
+
+1. **Flash the base.** Plug in **only the spare OG** (`fw flash` takes the first OG it finds), then:
+   ```bash
+   uv run python freewili/wiliOGbsp/tools/fw.py flash flbase --uf2 freewili/forklift/build/flbase_main.uf2
+   ```
+   Its screen shows `BASE`, then `NO RADIO` until it hears the forklift.
+2. **Flash the forklift** as usual (section 4). Its firmware already includes the radio.
+3. **Unplug the forklift's USB** and plug the base into the laptop. The OG runs on its internal battery. Every laptop tool finds the base automatically (`SERIAL_PORT = "auto"` tries the forklift first, then the base), so nothing else changes.
+
+The base screen then shows the forklift's state (`IDLE`, `DRIVING`, …), and the laptop gets the forklift's `T` lines. If the base hears nothing for 3 s, it sends `T,NO_RADIO,0.00`. If its own radio won't start, it sends `T,RADIO_FAULT,0.00`.
+
+| Detail | Value |
+|---|---|
+| Band | **915 MHz** (US licence-free 902–928 MHz). Both display apps switch the antenna paths from the 400 MHz default at boot, before the radio may transmit. 433 MHz would only allow intermittent transmissions in the US. |
+| Radio | **CC1101 on chip select 1.** The OG has two; CS0's antenna path measured about 25 dB weaker, and nothing got across on it. |
+| Power | **+10 dBm** (the CC1101's maximum). The OG's antenna path loses roughly 50 dB. At −10 dBm, a board half a metre away heard the other at about −83 dBm, under the forklift's own −76 dBm of noise from the motor drivers. At +10 dBm both ends hear each other at about −44 dBm. |
+| Modulation | GFSK at the driver's bring-up data rate. Its bring-up default (OOK) lost about half the packets. Setting 38.4 kbaud / 20 kHz deviation / 101 kHz bandwidth through the driver's setters made nothing decode, so those are left at bring-up values. |
+| Packet | 32 bytes: marker, type, forklift ID 1, sequence number, then the same text line as USB. The CC1101's CRC discards corrupted packets. |
+| Timing | About 9 ms of airtime per packet. The forklift replies with telemetry 5 ms after a command arrives (the base needs ~1 ms to get back into receive after sending). |
+| Measured | Laptop → base → forklift: 59 of 60 commands at 20 Hz, 0 corrupted. Forklift telemetry reaches the laptop every second. |
+| Safety | Lost packets just mean missing commands, and the forklift's **500 ms watchdog** brakes. Same if the base, the laptop or the link stops. |
+| Security | None: someone with a CC1101 on the same frequency, sync word and packet format could send commands. Fine for a demo. |
+
+**Diagnostics:** send `?` on either board's USB port to get a radio report line (`R,cs=1,peak_rssi=...,tx=...,rx=...,rxbad=...` plus key registers). `?0` / `?1` switch that board to radio CS0 / CS1 until it reboots. Laptop tools ignore `R` lines.
 
 ## Serial protocol
 

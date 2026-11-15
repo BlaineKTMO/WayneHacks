@@ -4,6 +4,7 @@
 
 #include "../main/motor_proto.h"
 #include "../main/byte_ring.h"
+#include "../main/rf_proto.h"
 
 static int failures;
 #define CHECK(cond) do { if (!(cond)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -119,7 +120,41 @@ static void test_byte_ring(void) {
     CHECK(byte_ring_push_all(&r, line, sizeof line - 1) && byte_ring_count(&r) == sizeof line - 1);
 }
 
+static void test_rf_proto(void) {
+    uint8_t p[RF_PAYLOAD_LEN];
+    char line[RF_TEXT_MAX + 1];
+    uint8_t seq = 0;
+    CHECK(rf_pack(p, RF_KIND_CMD, RF_FORKLIFT_ID, 7, "W,45,38\n") == RF_PAYLOAD_LEN);
+    CHECK(p[0] == RF_MAGIC && p[1] == RF_KIND_CMD && p[2] == RF_FORKLIFT_ID && p[3] == 7);
+    CHECK(rf_unpack(p, RF_PAYLOAD_LEN, RF_KIND_CMD, RF_FORKLIFT_ID, line, &seq) &&
+          strcmp(line, "W,45,38") == 0 && seq == 7);
+    /* the parser on the other end accepts what comes out */
+    cmd_t c = proto_parse_line(line);
+    CHECK(c.kind == CMD_WHEELS && c.left == 45 && c.right == 38);
+    /* wrong kind / id / length / magic are all refused */
+    CHECK(!rf_unpack(p, RF_PAYLOAD_LEN, RF_KIND_TELEM, RF_FORKLIFT_ID, line, NULL));
+    CHECK(!rf_unpack(p, RF_PAYLOAD_LEN, RF_KIND_CMD, 2, line, NULL));
+    CHECK(!rf_unpack(p, RF_PAYLOAD_LEN - 1, RF_KIND_CMD, RF_FORKLIFT_ID, line, NULL));
+    p[0] ^= 0xFF;
+    CHECK(!rf_unpack(p, RF_PAYLOAD_LEN, RF_KIND_CMD, RF_FORKLIFT_ID, line, NULL));
+    /* non-printable text refused */
+    rf_pack(p, RF_KIND_CMD, RF_FORKLIFT_ID, 0, "W,1,1");
+    p[RF_HEADER_LEN + 1] = 0x07;
+    CHECK(!rf_unpack(p, RF_PAYLOAD_LEN, RF_KIND_CMD, RF_FORKLIFT_ID, line, NULL));
+    /* long W refused (never half a command); long S truncated (a stop always goes) */
+    CHECK(rf_pack(p, RF_KIND_CMD, 1, 0, "W,100,100,this,is,way,too,long,for,a,packet") == 0);
+    CHECK(rf_pack(p, RF_KIND_CMD, 1, 0, "S,a_very_long_stop_reason_that_goes_on_and_on") == RF_PAYLOAD_LEN);
+    CHECK(rf_unpack(p, RF_PAYLOAD_LEN, RF_KIND_CMD, 1, line, NULL) && line[0] == 'S' &&
+          strlen(line) == RF_TEXT_MAX && proto_parse_line(line).kind == CMD_STOP);
+    CHECK(rf_pack(p, RF_KIND_CMD, 1, 0, "\n") == 0);
+    /* every telemetry line fits */
+    char t[32];
+    proto_format_telemetry(t, sizeof t, FL_STOPPED, 12.34f);
+    CHECK(rf_pack(p, RF_KIND_TELEM, 1, 0, t) == RF_PAYLOAD_LEN);
+}
+
 int main(void) {
+    test_rf_proto();
     test_byte_ring();
     test_parse();
     test_drive_channel();
