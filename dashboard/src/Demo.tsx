@@ -1,25 +1,22 @@
 // /demo: hand-off iPad page. A scrolling story with the live fleet embedded in the middle.
 import { Authenticator, ThemeProvider } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
-import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import type { Config, SiteInfo } from './config'
 import { SiteSwitcher, useSite } from './sites'
-import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { SimSwitch } from './SimSwitch'
 import { CameraFeed } from './CameraFeed'
 import { Devices } from './Devices'
-import { MissionPanel } from './MissionPanel'
 import { Architecture } from './Architecture'
+import { Hardware } from './Hardware'
+import { LearningResults, MlopsPipeline, SagemakerRetraining } from './Learning'
 import { Notes, Problem, SideBySide } from './Story'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 import './demo.css'
 
 const Warehouse3D = lazy(() => import('./Warehouse3D'))
-
-const DEMO_PRESETS = ['Move pallet 3 to dock B', 'Bring pallet 1 to dock A', 'Swap pallets 1 and 2', 'Move pallet 2 to slot A4']
-const MISSION_PRESETS = ['Move pallet 1 to dock 4', 'Move pallet 5 to dock 1', 'Bring pallet 9 to dock 2', 'Swap pallets 1 and 9']
 
 export default function Demo({ cfg }: { cfg: Config }) {
   useEffect(() => {
@@ -45,7 +42,6 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
   const fleet = useFleet(cfg)
   const ids = Object.keys(fleet.forklifts).sort()
   const [selected, setSelected] = useState<string>()
-  const [text, setText] = useState('')
   const [toast, setToast] = useState<string>()
   const [view, setView] = useState<'3d' | '2d'>('3d')
   const [personMode, setPersonMode] = useState(false)
@@ -74,16 +70,6 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
   const done = fleet.tasks.filter((t) => t.status === 'done').length
   const latest = fleet.tasks.find((t) => t.task_id.startsWith('t-'))
   const live = fleet.conn === 'live'
-  const canSend = live && !(latest && ['planning', 'running'].includes(latest.status))
-
-  const send = (t: string) => {
-    if (!t.trim()) return
-    fleet.submitTask(t.trim())
-    setText('')
-    setToast(`Sent: “${t.trim()}”`)
-    document.getElementById('plan')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
-  const onSubmit = (e: FormEvent) => { e.preventDefault(); send(text) }
 
   const status = useMemo(() => {
     if (!live) return 'Connecting to the fleet…'
@@ -95,7 +81,7 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
       <nav className="d-nav">
         <a href="#top" className="d-logo">FLOE</a>
         <div className="d-links">
-          <a href="#problem">Problem</a><a href="#live">Live</a><a href="#mission">Mission</a><a href="#how">How it works</a><a href="#architecture">Architecture</a><a href="#safety">Safety</a><a href="#learning">Learning</a><a href="#faq">FAQ</a>
+          <a href="#problem">Problem</a><a href="#live">Live</a><a href="#hardware">Hardware</a><a href="#how">How it works</a><a href="#architecture">Architecture</a><a href="#safety">Safety</a><a href="#learning">Learning</a><a href="#mlops">MLOps</a><a href="#faq">FAQ</a>
         </div>
         <SiteSwitcher sites={sites} current={cfg.site} onChange={onSite} className="d-site" />
         <a className="d-nav-cta" href="#live">Try it</a>
@@ -113,9 +99,10 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
       </header>
 
       {/* ------------------------------------------------ highlights */}
-      <section className="d-highlights">
+      <section className="d-highlights four">
         <div><b>0</b><span>sensors on the forklift</span><p>Each forklift has an AprilTag on its roof. A camera in the ceiling reads it, so the truck doesn’t need lidar.</p></div>
-        <div><b>~2 s</b><span>from words to a plan</span><p>You type an order, the OE (Orchestration Engine) on Amazon Bedrock writes a plan, and we check that plan before any forklift moves.<sup><a href="#notes">3</a></sup></p></div>
+        <div className="d-hl-learn"><b>63%</b><span>cheaper plans, learned on the job</span><p>Every order is graded and replayed. The first planner we promoted cut plan cost by 63% on real recorded orders.<sup><a href="#notes">4</a></sup> <a href="#learning">See how ↓</a></p></div>
+        <div><b>~1.3 s</b><span>from words to a plan</span><p>You type an order, the OE (Orchestration Engine) on Amazon Bedrock writes a plan, and we check that plan before any forklift moves.<sup><a href="#notes">3</a></sup></p></div>
         <div><b>&lt;0.5 s</b><span>to stop, even offline</span><p>Stopping is handled on the forklift and the laptop beside the camera. If the Wi-Fi drops, the Free-WiLi’s watchdog cuts the motors anyway.</p></div>
       </section>
 
@@ -129,7 +116,7 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
       {/* ------------------------------------------------ live */}
       <section id="live" className="d-section">
         <h2>Run the fleet<br /><span>from right here.</span></h2>
-        <p className="d-sub">This is the live system. Tap one of the orders, or pick a forklift and tap a spot on the floor to send it there.</p>
+        <p className="d-sub">This is the live system. Pick a forklift and tap a spot on the floor to send it there.</p>
 
         <div className="d-live">
           <div className="d-map-card">
@@ -198,17 +185,6 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
           </div>
 
           <div className="d-control">
-            <h3>Give an order</h3>
-            <div className="d-presets">
-              {(fleet.graph?.nodes.some((n) => n.id === 'dock_4') ? MISSION_PRESETS : DEMO_PRESETS).map((p) => (
-                <button key={p} className="d-preset" disabled={!canSend} onClick={() => send(p)}>{p}</button>
-              ))}
-            </div>
-            <form className="d-input" onSubmit={onSubmit}>
-              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Or type your own…" enterKeyHint="send" />
-              <button type="submit" disabled={!canSend || !text.trim()}>Send</button>
-            </form>
-            {!canSend && live && <p className="d-busy">A job is in progress. New orders unlock when it finishes.</p>}
             <div className="d-devs"><h4>Devices</h4><Devices health={fleet.health} /></div>
             <CameraFeed camera={fleet.camera} className="d-cam" />
             <div id="plan" className="d-plan">
@@ -219,14 +195,12 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
         </div>
       </section>
 
-      {/* ------------------------------------------------ missions */}
-      {fleet.graph?.nodes.some((n) => n.id === 'dock_4') && (
-        <section id="mission" className="d-section">
-          <h2>Empty the aisles.<br /><span>Pick the docks.</span></h2>
-          <p className="d-sub">Choose which aisles ship to which truck docks. The whole fleet splits the work: every free forklift takes the nearest pallet, lanes are reserved, and docks clear as trucks are loaded.</p>
-          <div className="d-mission"><MissionPanel cfg={cfg} live={fleet.mission} pallets={fleet.pallets} /></div>
-        </section>
-      )}
+      {/* ------------------------------------------------ hardware */}
+      <section id="hardware" className="d-section">
+        <h2>The forklifts.<br /><span>Built from hobby parts.</span></h2>
+        <p className="d-sub">Two small forklifts made from a Free-WiLi, hobby motor drivers, an Arduino car kit and some 3D printing. Nothing on them can see. The ceiling camera does that for them.</p>
+        <Hardware />
+      </section>
 
       {/* ------------------------------------------------ how */}
       <section id="how" className="d-section">
@@ -274,8 +248,16 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
       {/* ------------------------------------------------ learning */}
       <section id="learning" className="d-section">
         <h2>It gets better<br /><span>with every order.</span></h2>
-        <p className="d-sub">We grade every job on what actually happened. A second, candidate planner also writes a plan for each order. Its plan is scored in a simulator but never run, and if it keeps scoring better you can promote it.</p>
-        <div className="d-lab"><PlannerLab cfg={cfg} refreshKey={fleet.labTick} /></div>
+        <p className="d-sub">A fleet that can’t learn only gets better when someone ships an update. Ours grades every job on what actually happened, tests a better planner against those real orders, and only then lets it drive. Here’s what that has delivered so far.<sup><a href="#notes">4</a></sup></p>
+        <LearningResults />
+      </section>
+
+      {/* ------------------------------------------------ mlops */}
+      <section id="mlops" className="d-section alt">
+        <h2>The MLOps pipeline.<br /><span>How a planner earns its job.</span></h2>
+        <p className="d-sub">All seven steps run on AWS today, with nobody labelling data. Tags marked “Next” are what we’d add after the hackathon. A new planner has to beat the current one on recorded orders and then on live ones before it touches a forklift.</p>
+        <MlopsPipeline />
+        <SagemakerRetraining />
       </section>
 
       {/* ------------------------------------------------ faq */}

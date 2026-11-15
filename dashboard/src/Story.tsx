@@ -109,7 +109,8 @@ export function Notes() {
     <ol id="notes" className="s-notes">
       <li>Low end of the $35K–$65K quoted for a Balyo kit plus conversion (<a href="https://www.grabarobot.com/blog/autonomous-forklift-robot-warehouse-2026/" target="_blank" rel="noreferrer">Grab a Robot, 2026 buying guide</a>). Complete autonomous forklifts run about $75K–$150K for standard pallet handling (<a href="https://www.agvnetwork.com/agv-cost-estimation-how-much-does-an-automated-guided-vehicle-cost" target="_blank" rel="noreferrer">AGV Network</a>). We use the low figure on purpose.</li>
       <li>Our estimates, not quotes: an industrial ceiling camera per aisle zone, one edge PC per site, and a drive-by-wire interface plus printed AprilTag per truck. Both sides exclude integration (often ~30% more), installation and running costs, including FLOE’s AWS bill.</li>
-      <li>“~2 s” is typical time from order to validated plan from the OE on Amazon Bedrock; “&lt;0.5 s” is the Free-WiLi watchdog timeout.</li>
+      <li>“~1.3 s” is the median planning time on Amazon Bedrock over 40 recorded orders (FleetTasks); checking the plan adds milliseconds. “&lt;0.5 s” is the Free-WiLi watchdog timeout.</li>
+      <li>Snapshot of FleetPlanners and FleetTasks on 15 Nov 2026. Offline gate: SageMaker Processing job running <code>mlops/evaluate.py</code> over 23 recorded orders. Live: 33 orders where the candidate planned in shadow alongside prod. Production started on a deliberately weak prompt; see the caveats in the learning section.</li>
     </ol>
   )
 }

@@ -7,7 +7,7 @@ const PARTS: { name: string; what: string }[] = [
   { name: 'L298N motor drivers', what: 'Cheap H-bridge boards that take the Free-WiLi’s signals and supply power to the drive motors and the fork lift.' },
   { name: 'Arduino robot car kits', what: 'FL-02 is built on a hobby car kit: the chassis plate, yellow gear motors and rubber wheels all came in the box.' },
   { name: '3D-printed parts', what: 'FL-01’s chassis, mast and forks are printed. The fork carriage slides up the red mast so it can actually lift a pallet.' },
-  { name: 'Mecanum wheels', what: 'FL-01 rolls on mecanum wheels, which let it turn on the spot in tight aisles.' },
+  { name: 'Mecanum wheels', what: 'FL-01 rolls on mecanum wheels. We drive them tank-style, left side against right side, so both forklifts use the same steering code.' },
 ]
 
 export function Hardware() {
