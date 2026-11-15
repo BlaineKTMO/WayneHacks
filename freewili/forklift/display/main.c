@@ -35,9 +35,16 @@ static uint16_t state_colour(int s) {
     }
 }
 
+/* lcd_text draws NOTHING above scale 3 (LCD_MAX_SCALE in the BSP's lcd_text.c),
+ * silently. At scale 3 a glyph is 18x24 px on the 320x240 panel. */
+#define TEXT_SCALE 3u
+#define TEXT_X 16u
+#define ID_Y 70u
+#define STATE_Y 140u
+
 static void draw_state(const char *text, uint16_t colour) {
     if (!s_lcd_ready) return;
-    lcd_text_draw_padded(8u, 140u, text, 9u, 3u, colour, 0x0000u);
+    lcd_text_draw_padded(TEXT_X, STATE_Y, text, 9u, TEXT_SCALE, colour, 0x0000u);
 }
 
 int main(void) {
@@ -58,7 +65,7 @@ int main(void) {
         st7789_clear(0x0000u);
         st7789_dma_wait();
         board_backlight(255);
-        lcd_text_draw_padded(8u, 40u, FORKLIFT_ID, 9u, 5u, 0xFFFFu, 0x0000u);
+        lcd_text_draw_padded(TEXT_X, ID_Y, FORKLIFT_ID, 9u, TEXT_SCALE, 0xFFFFu, 0x0000u);
         draw_state(link_up ? "WAITING" : "NO LINK", state_colour(link_up ? 0 : 4));
     }
 

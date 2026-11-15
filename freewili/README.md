@@ -20,15 +20,17 @@ Both are built from one CMake project and flashed as **one UF2**: the main UF2 c
 
 **Before anything else, jumper header pin 6 (3.3 V out) to header pin 4 (`V PINS IN`).** Without a voltage on pin 4, no breakout pin moves at all, and it looks exactly like broken firmware.
 
-| L298N | OG header pin | GPIO | Job |
+Wire by **header pin number** (the 1–20 printed on the OG). The GPIO column is the chip's internal number, used in the code; it isn't printed on the board.
+
+| L298N | Wire to OG header pin | Job | (GPIO in code) |
 |---|---|---|---|
-| ENA | 9 | 8 | Left speed (PWM) |
-| IN1 | 3 | 27 | Left direction |
-| IN2 | 1 | 13 | Left direction |
-| ENB | 11 | 11 | Right speed (PWM) |
-| IN3 | 15 | 14 | Right direction |
-| IN4 | 13 | 15 | Right direction |
-| GND | any GND | | **Common ground with the motor battery** |
+| ENA | **9** | Left speed (PWM) | 8 |
+| IN1 | **3** | Left direction | 27 |
+| IN2 | **1** | Left direction | 13 |
+| ENB | **11** | Right speed (PWM) | 11 |
+| IN3 | **15** | Right direction | 14 |
+| IN4 | **13** | Right direction | 15 |
+| GND | **19 or 20** | **Common ground with the motor battery** | |
 
 - **Remove the ENA and ENB jumpers** on the L298N, or the motors ignore the speed signal and run flat out.
 - Motor battery goes to the L298N's `12V` terminal, never through the Free-WiLi. Leave the L298N's 5 V regulator jumper on so it powers its own logic. Use a 2S LiPo (7.4 V) or 6×AA: the L298N loses about 2 V, so 4×AA leaves small motors weak.
