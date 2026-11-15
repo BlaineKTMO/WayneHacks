@@ -14,7 +14,9 @@
 
 FWOG_POWER_DEFAULT();
 
-#define FORKLIFT_ID "fl-01"
+/* Upper case on screen only: in this font a lowercase l reads as a 1. The ID
+ * everywhere else (MQTT, DynamoDB, dashboard) stays "fl-01". */
+#define FORKLIFT_ID "FL-01"
 #define MSG_FORKLIFT_STATUS 0x40u   /* keep in step with forklift/main/main.c */
 #define MAIN_SILENT_MS 3000u        /* main sends status every second */
 

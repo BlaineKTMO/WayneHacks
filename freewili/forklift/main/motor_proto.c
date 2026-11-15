@@ -25,8 +25,18 @@ static bool parse_int(const char *s, const char *end, long *out) {
     return true;
 }
 
+/* Split "X,<a>,<b>" after the prefix and parse both integers strictly. */
+static bool parse_two_ints(const char *a, long *x, long *y) {
+    const char *comma = strchr(a, ',');
+    if (!comma) return false;
+    const char *b = comma + 1;
+    const char *end = b + strlen(b);
+    while (end > b && (end[-1] == '\r' || end[-1] == ' ')) end--;
+    return parse_int(a, comma, x) && parse_int(b, end, y);
+}
+
 cmd_t proto_parse_line(const char *line) {
-    cmd_t c = {CMD_NONE, 0, 0};
+    cmd_t c = {CMD_NONE, 0, 0, 0, 0};
     if (!line) return c;
     while (*line == ' ' || *line == '\r') line++;
 
@@ -34,34 +44,41 @@ cmd_t proto_parse_line(const char *line) {
         c.kind = CMD_STOP;
         return c;
     }
-    if (line[0] != 'W' || line[1] != ',') return c;
+    if (line[1] != ',') return c;
 
-    const char *a = line + 2;
-    const char *comma = strchr(a, ',');
-    if (!comma) return c;
-    const char *b = comma + 1;
-    const char *end = b + strlen(b);
-    while (end > b && (end[-1] == '\r' || end[-1] == ' ')) end--;
-
-    long l, r;
-    if (!parse_int(a, comma, &l) || !parse_int(b, end, &r)) return c;
-    c.kind = CMD_WHEELS;
-    c.left = clamp100(l);
-    c.right = clamp100(r);
+    long x, y;
+    if (line[0] == 'W') {
+        if (!parse_two_ints(line + 2, &x, &y)) return c;
+        c.kind = CMD_WHEELS;
+        c.left = clamp100(x);
+        c.right = clamp100(y);
+    } else if (line[0] == 'F') {
+        if (!parse_two_ints(line + 2, &x, &y) || y < 0) return c;
+        c.kind = CMD_FORK;
+        c.fork = clamp100(x);
+        c.fork_ms = y > (long)FORK_MAX_MS ? FORK_MAX_MS : (uint32_t)y;
+    }
     return c;
 }
 
-l298n_channel_t l298n_channel(int speed) {
-    l298n_channel_t ch;
+pwm_pair_t drive_channel(int speed) {
+    pwm_pair_t p = {0, 0};
+    speed = clamp100(speed);
+    if (speed > 0) p.a_pct = (uint8_t)speed;
+    else if (speed < 0) p.b_pct = (uint8_t)(-speed);
+    return p;
+}
+
+fork_out_t fork_channel(int speed) {
+    fork_out_t f = {0, false};
     speed = clamp100(speed);
     if (speed > 0) {
-        ch.in1 = true;  ch.in2 = false; ch.duty_pct = (uint8_t)speed;
+        f.a_pct = (uint8_t)speed;
     } else if (speed < 0) {
-        ch.in1 = false; ch.in2 = true;  ch.duty_pct = (uint8_t)(-speed);
-    } else {
-        ch.in1 = false; ch.in2 = false; ch.duty_pct = 100;   /* brake */
+        f.a_pct = (uint8_t)(100 + speed);   /* 100 - |speed| */
+        f.b_high = true;
     }
-    return ch;
+    return f;
 }
 
 const char *fl_state_name(fl_state_t s) {

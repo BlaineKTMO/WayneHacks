@@ -30,17 +30,38 @@ static void test_parse(void) {
     CHECK(proto_parse_line("Stop").kind == CMD_NONE);
     CHECK(proto_parse_line("T,IDLE,7.40").kind == CMD_NONE);
     CHECK(proto_parse_line(NULL).kind == CMD_NONE);
+
+    c = proto_parse_line("F,60,1500");
+    CHECK(c.kind == CMD_FORK && c.fork == 60 && c.fork_ms == 1500);
+    c = proto_parse_line("F,-200,99999");               /* speed clamped, time capped */
+    CHECK(c.kind == CMD_FORK && c.fork == -100 && c.fork_ms == FORK_MAX_MS);
+    c = proto_parse_line("F,0,0");
+    CHECK(c.kind == CMD_FORK && c.fork == 0 && c.fork_ms == 0);
+    CHECK(proto_parse_line("F,50,-1").kind == CMD_NONE);  /* negative time rejected */
+    CHECK(proto_parse_line("F,50").kind == CMD_NONE);
+    CHECK(proto_parse_line("F,up,100").kind == CMD_NONE);
 }
 
-static void test_l298n(void) {
-    l298n_channel_t ch = l298n_channel(60);
-    CHECK(ch.in1 && !ch.in2 && ch.duty_pct == 60);
-    ch = l298n_channel(-35);
-    CHECK(!ch.in1 && ch.in2 && ch.duty_pct == 35);
-    ch = l298n_channel(0);                          /* brake: EN high, IN1 == IN2 */
-    CHECK(!ch.in1 && !ch.in2 && ch.duty_pct == 100);
-    ch = l298n_channel(500);
-    CHECK(ch.duty_pct == 100 && ch.in1);
+static void test_drive_channel(void) {
+    pwm_pair_t p = drive_channel(60);
+    CHECK(p.a_pct == 60 && p.b_pct == 0);
+    p = drive_channel(-35);
+    CHECK(p.a_pct == 0 && p.b_pct == 35);
+    p = drive_channel(0);                              /* brake: both IN low */
+    CHECK(p.a_pct == 0 && p.b_pct == 0);
+    p = drive_channel(500);
+    CHECK(p.a_pct == 100 && p.b_pct == 0);
+}
+
+static void test_fork_channel(void) {
+    fork_out_t f = fork_channel(70);                   /* up: A drives, B low */
+    CHECK(f.a_pct == 70 && !f.b_high);
+    f = fork_channel(-70);                             /* down: B high, A low 70% of the time */
+    CHECK(f.a_pct == 30 && f.b_high);
+    f = fork_channel(-100);                            /* full down: A never high */
+    CHECK(f.a_pct == 0 && f.b_high);
+    f = fork_channel(0);                               /* brake */
+    CHECK(f.a_pct == 0 && !f.b_high);
 }
 
 static void test_telemetry(void) {
@@ -77,7 +98,8 @@ static void test_line_rx(void) {
 
 int main(void) {
     test_parse();
-    test_l298n();
+    test_drive_channel();
+    test_fork_channel();
     test_telemetry();
     test_line_rx();
     if (failures) { printf("%d failure(s)\n", failures); return 1; }

@@ -1,7 +1,8 @@
 """Talk to the Free-WiLi over USB serial using the Ring 1 text protocol.
 
   laptop -> Free-WiLi   W,<left>,<right>\\n     wheel speeds -100..100, sent at 20 Hz
-  laptop -> Free-WiLi   S,<reason>\\n           stop now
+  laptop -> Free-WiLi   F,<speed>,<ms>\\n       fork motor -100..100 (+ = up) for ms (max 5000)
+  laptop -> Free-WiLi   S,<reason>\\n           stop everything now
   Free-WiLi -> laptop   T,<state>,<battery_v>\\n telemetry at 1 Hz
 
 Two implementations with the same methods:
@@ -24,6 +25,13 @@ def clamp(v: float, lo: float = -100, hi: float = 100) -> int:
 
 def format_wheels(left: float, right: float) -> str:
     return f"W,{clamp(left)},{clamp(right)}\n"
+
+
+FORK_MAX_MS = 5000   # the firmware caps fork runs here (no end-stop switches)
+
+
+def format_fork(speed: float, ms: int) -> str:
+    return f"F,{clamp(speed)},{int(max(0, min(FORK_MAX_MS, ms)))}\n"
 
 
 def format_stop(reason: str) -> str:
@@ -75,6 +83,10 @@ class SerialLink:
     def wheels(self, left: float, right: float) -> None:
         self.ser.write(format_wheels(left, right).encode())
 
+    def fork(self, speed: float, ms: int) -> None:
+        """Run the fork motor (+ = up) for ms, then it stops on its own."""
+        self.ser.write(format_fork(speed, ms).encode())
+
     def stop(self, reason: str) -> None:
         self.ser.write(format_stop(reason).encode())
 
@@ -119,6 +131,9 @@ class SimLink:
         self._advance()
         self.left, self.right = clamp(left), clamp(right)
         self.state = "DRIVING" if (self.left or self.right) else "IDLE"
+
+    def fork(self, speed: float, ms: int) -> None:
+        pass   # the sim has no fork
 
     def stop(self, reason: str) -> None:
         self._advance()

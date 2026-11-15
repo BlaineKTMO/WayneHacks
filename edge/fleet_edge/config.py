@@ -43,6 +43,13 @@ LOOKAHEAD_M = 0.08            # pure pursuit look-ahead. Bigger = smoother, cuts
 ARRIVE_RADIUS_M = 0.03        # "reached the waypoint" distance
 WHEEL_BASE_M = 0.12           # distance between left and right wheels
 TURN_IN_PLACE_RAD = 1.2       # if target is more than this far off-heading, spin first
+# 4-wheel skid steer turns less sharply than a 2-wheel robot: if turns come out short,
+# raise WHEEL_BASE_M (an "effective" track width, often 1.5-2x the measured one).
+
+# ---------------------------------------------------------------- fork
+FORK_SPEED = 60               # fork motor command, 0..100. + = up.
+FORK_STEP_MS = 300            # how long one key press in step4 runs the fork
+FORK_LIFT_MS = 1500           # full lift / lower time for Pick/Drop. Measure it! Max 5000.
 
 # Ring 1 loop. Must sit inside the corner tags.
 WAYPOINTS = [(0.40, 0.30), (1.10, 0.30), (1.10, 0.70), (0.40, 0.70)]

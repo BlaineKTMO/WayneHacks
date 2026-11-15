@@ -24,11 +24,14 @@ def test_motor_proto(tmp_path):
 
 def test_python_and_firmware_agree():
     """freewili_link.py must speak exactly what motor_proto.c parses."""
-    from fleet_edge.freewili_link import format_stop, format_wheels, parse_line
+    from fleet_edge.freewili_link import format_fork, format_stop, format_wheels, parse_line
 
     assert format_wheels(40, -25) == "W,40,-25\n"
     assert format_wheels(250, -250) == "W,100,-100\n"
     assert format_stop("lost,tag") == "S,lost tag\n"
+    assert format_fork(60, 1500) == "F,60,1500\n"
+    assert format_fork(-250, 99999) == "F,-100,5000\n"   # same caps as the firmware
+    assert format_fork(30, -5) == "F,30,0\n"
     t = parse_line("T,DRIVING,0.00")
     assert t is not None and t.state == "DRIVING" and t.battery_v == 0.0
     assert parse_line("[forklift] breakout ready") is None   # firmware DIAG lines are ignored
