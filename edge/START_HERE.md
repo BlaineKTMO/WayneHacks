@@ -81,6 +81,8 @@ WAREHOUSE_MAP=table uv run python -m fleet_edge.bridge # bridge uses it too
 
 Switch back with `use_map.py demo` when the simulated fleet drives. Pick/Drop now run the fork for `FORK_LIFT_MS` (config.py): measure a full lift and set it. The camera view streams to the website automatically (`CAMERA_STREAM_FPS`).
 
+**Is it all connected?** The dashboard's **Devices** panel shows the laptop, camera (fps, corner tags seen, map locked) and each Free-WiLi (link, telemetry age, battery, tag seen), green / amber / red with the reason. If the laptop drops off, it turns red on its own.
+
 **Also before step 9: turn the dashboard's "Simulated fleet" switch OFF**, or the cloud gets two `fl-01`s. Which Free-WiLi drives which forklift is `FORKLIFT_LINKS` in `config.py`.
 
 ## 3. When something goes wrong

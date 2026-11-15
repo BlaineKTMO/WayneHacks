@@ -174,9 +174,11 @@ def connect(client_id: str) -> mqtt.Connection:
             fut, _ = connection.resubscribe_existing_topics()
             fut.add_done_callback(lambda f: print(f"!! resubscribed: {f.result()}", flush=True))
 
+    will = mqtt.Will(topic=topics.health("sim-fleet"), qos=mqtt.QoS.AT_LEAST_ONCE, retain=True,
+                     payload=json.dumps({"source": "sim-fleet", "online": False, "reason": "connection lost"}).encode())
     conn = mqtt_connection_builder.websockets_with_default_aws_signing(
-        endpoint=endpoint, region=REGION, credentials_provider=provider,
-        client_id=client_id, clean_session=False, keep_alive_secs=30,
+        endpoint=endpoint, region=REGION, credentials_provider=provider, will=will,
+        client_id=client_id, clean_session=False, keep_alive_secs=15,
         on_connection_interrupted=interrupted, on_connection_resumed=resumed)
     conn.connect().result(timeout=15)
     print(f"connected to {endpoint} as {client_id}")
@@ -211,6 +213,12 @@ def main():
                             callback=lambda topic, payload, **_: HAZARDS.on_detections(json.loads(payload)))
     fut.result(timeout=10)
 
+    started = time.time()
+
+    def publish_raw(topic: str, payload: dict):
+        with lock:
+            conn.publish(topic=topic, payload=json.dumps(payload), qos=mqtt.QoS.AT_MOST_ONCE, retain=True)
+
     print("running. Ctrl+C to quit.")
     n = 0
     try:
@@ -218,11 +226,21 @@ def main():
             t0 = time.monotonic()
             for f in fleet.values():
                 f.tick(n)
+            if n % TELEMETRY_EVERY == 0:
+                publish_raw(topics.health("sim-fleet"), {
+                    "source": "sim-fleet", "kind": "sim", "online": True, "uptime_s": int(time.time() - started),
+                    "map": "demo", "sim": True, "camera": {"mode": "simulated"},
+                    "forklifts": {fid: {"link": "simulated", "state": f.state, "battery_v": 7.4, "tag_age_s": 0.0}
+                                  for fid, f in fleet.items()}, "ts": int(time.time() * 1000)})
             n += 1
             time.sleep(max(0.0, TICK_S - (time.monotonic() - t0)))
     except KeyboardInterrupt:
         pass
     finally:
+        try:
+            publish_raw(topics.health("sim-fleet"), {"source": "sim-fleet", "online": False, "reason": "stopped"})
+        except Exception:  # noqa: BLE001
+            pass
         conn.disconnect().result(timeout=5)
 
 

@@ -188,12 +188,16 @@ def main():
         print("\n== Browser MQTT")
         inbox = Inbox()
         conn, closed = browser_mqtt(o, token, f"dash-e2e-{uuid.uuid4().hex[:6]}")
-        for f in ("fleet/+/+", "tasks/+/+", "warehouse/+", "planners/+"):
+        for f in ("fleet/+/+", "tasks/+/+", "warehouse/#", "planners/+"):
             fut, _ = conn.subscribe(topic=f, qos=mqtt.QoS.AT_LEAST_ONCE, callback=inbox.on)
             fut.result(timeout=10)
         check("connect + 4 subscriptions with Cognito credentials", not closed.is_set())
         got = inbox.wait(lambda t, d: t.endswith("/pose"), 15)
         check("live forklift poses arriving", got is not None, got[0] if got else "no pose in 15s (is a fleet running?)")
+
+        hl = inbox.wait(lambda t, d: t.startswith("warehouse/health/") and d.get("online") is True, 15)
+        check("device health heartbeat online", hl is not None,
+              f"{hl[1]['source']}: {len(hl[1].get('forklifts', {}))} forklift(s), camera {hl[1].get('camera', {}).get('mode')}" if hl else "none in 15s")
 
         print("\n== Camera feed")
         import numpy as np, cv2  # noqa: E401  (edge group)

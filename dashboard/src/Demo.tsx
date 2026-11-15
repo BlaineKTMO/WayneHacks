@@ -7,7 +7,9 @@ import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { SimSwitch } from './SimSwitch'
 import { CameraFeed } from './CameraFeed'
+import { Devices } from './Devices'
 import { Architecture } from './Architecture'
+import { Notes, Problem, SideBySide } from './Story'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 import './demo.css'
@@ -83,7 +85,7 @@ function Page({ cfg }: { cfg: Config }) {
       <nav className="d-nav">
         <a href="#top" className="d-logo">Overhead</a>
         <div className="d-links">
-          <a href="#live">Live</a><a href="#how">How it works</a><a href="#architecture">Architecture</a><a href="#safety">Safety</a><a href="#learning">Learning</a><a href="#faq">FAQ</a>
+          <a href="#problem">Problem</a><a href="#live">Live</a><a href="#how">How it works</a><a href="#architecture">Architecture</a><a href="#safety">Safety</a><a href="#learning">Learning</a><a href="#faq">FAQ</a>
         </div>
         <a className="d-nav-cta" href="#live">Try it</a>
       </nav>
@@ -95,15 +97,22 @@ function Page({ cfg }: { cfg: Config }) {
         <p className="d-lede">Ceiling cameras see every forklift. One AI plans every job. The forklifts just follow the route, so simple robot chassis become an autonomous fleet.</p>
         <div className="d-hero-cta">
           <a className="d-btn primary" href="#live">Run the fleet ↓</a>
-          <a className="d-btn" href="#how">How it works</a>
+          <a className="d-btn" href="#problem">Why it matters</a>
         </div>
       </header>
 
       {/* ------------------------------------------------ highlights */}
       <section className="d-highlights">
         <div><b>0</b><span>sensors on the forklift</span><p>Position comes from AprilTags seen by a camera in the ceiling, not lidar on every truck.</p></div>
-        <div><b>~2 s</b><span>from words to a plan</span><p>Claude on Amazon Bedrock turns an order into a behavior tree that a validator checks before anything moves.</p></div>
+        <div><b>~2 s</b><span>from words to a plan</span><p>Claude on Amazon Bedrock turns an order into a behavior tree that a validator checks before anything moves.<sup><a href="#notes">3</a></sup></p></div>
         <div><b>&lt;0.5 s</b><span>to stop, even offline</span><p>Safety runs at the edge. If the Wi-Fi drops, the watchdog still stops the motors.</p></div>
+      </section>
+
+      {/* ------------------------------------------------ problem */}
+      <section id="problem" className="d-section">
+        <h2>Autonomy shouldn’t<br /><span>cost a robot per truck.</span></h2>
+        <p className="d-sub">Warehouses want self-driving forklifts. But today every truck has to see, think and steer for itself, and that bill repeats for the whole fleet.</p>
+        <Problem />
       </section>
 
       {/* ------------------------------------------------ live */}
@@ -176,6 +185,7 @@ function Page({ cfg }: { cfg: Config }) {
               <button type="submit" disabled={!canSend || !text.trim()}>Send</button>
             </form>
             {!canSend && live && <p className="d-busy">A job is in progress. New orders unlock when it finishes.</p>}
+            <div className="d-devs"><h4>Devices</h4><Devices health={fleet.health} /></div>
             <CameraFeed camera={fleet.camera} className="d-cam" />
             <div id="plan" className="d-plan">
               <h4>Claude's plan</h4>
@@ -210,6 +220,13 @@ function Page({ cfg }: { cfg: Config }) {
         <Architecture />
       </section>
 
+      {/* ------------------------------------------------ side by side */}
+      <section id="compare" className="d-section">
+        <h2>Side by side.</h2>
+        <p className="d-sub">Same job, different place for the intelligence.</p>
+        <SideBySide />
+      </section>
+
       {/* ------------------------------------------------ safety */}
       <section id="safety" className="d-section alt">
         <h2>The AI never<br /><span>touches the motors.</span></h2>
@@ -219,6 +236,7 @@ function Page({ cfg }: { cfg: Config }) {
           <div><b>Two forklifts, one lane.</b><p>A forklift must reserve the next stops before driving them. Blocked for 5 s? It reroutes. A parked forklift in the way moves aside.</p></div>
         </div>
       </section>
+
 
       {/* ------------------------------------------------ learning */}
       <section id="learning" className="d-section">
@@ -242,6 +260,8 @@ function Page({ cfg }: { cfg: Config }) {
           ))}
         </div>
       </section>
+
+      <section className="d-section d-notes-sec"><h4 className="s-notes-h">Notes</h4><Notes /></section>
 
       <footer className="d-foot">
         <span>Overhead · WayneHacks 2026</span>

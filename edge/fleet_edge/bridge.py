@@ -19,6 +19,7 @@ Never run this and tools/sim_fleet.py (or the hosted simulated fleet) for the sa
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import math
 import queue
@@ -178,6 +179,16 @@ class Unit:
         print(f"[{self.fid}] done at {self.node}")
         self.follower, self.path, self.state = None, None, "IDLE"
 
+    def health(self, now: float) -> dict:
+        """Free-WiLi link + tag visibility for the Devices panel."""
+        tele_age = now - getattr(self.link, "last_telemetry_at", 0.0) if getattr(self.link, "last_telemetry_at", 0.0) else None
+        t = self.link.last_telemetry
+        ok = tele_age is not None and tele_age < 3
+        return {"link": "ok" if ok else ("silent" if tele_age is not None else "no telemetry yet"),
+                "port": str(getattr(self.link, "port", "?")), "telemetry_age_s": round(tele_age, 1) if tele_age is not None else None,
+                "fw_state": t.state if t else None, "battery_v": t.battery_v if t else None,
+                "tag_age_s": round(now - self.last_seen, 1) if self.last_seen else None, "state": self.state}
+
     def telemetry(self):
         t = self.link.poll()
         motor = 0.02 * (abs(getattr(self.link, "left", 0)) + abs(getattr(self.link, "right", 0)))
@@ -198,6 +209,15 @@ def encode_frame(frame) -> bytes | None:
     return None
 
 
+EDGE_ID = os.environ.get("EDGE_ID", "edge-01")
+
+
+def offline_will(source: str) -> mqtt.Will:
+    """IoT Core publishes this (retained) if we drop off without saying goodbye."""
+    return mqtt.Will(topic=topics.health(source), qos=mqtt.QoS.AT_LEAST_ONCE, retain=True,
+                     payload=json.dumps({"source": source, "online": False, "reason": "connection lost"}).encode())
+
+
 def connect(use_iam: bool, region: str = "us-east-2") -> mqtt.Connection:
     def interrupted(connection, error, **_):
         print(f"!! connection interrupted: {error}")
@@ -207,8 +227,8 @@ def connect(use_iam: bool, region: str = "us-east-2") -> mqtt.Connection:
         if not session_present:
             connection.resubscribe_existing_topics()
 
-    common = dict(clean_session=False, keep_alive_secs=30, on_connection_interrupted=interrupted,
-                  on_connection_resumed=resumed)
+    common = dict(clean_session=False, keep_alive_secs=15, on_connection_interrupted=interrupted,
+                  on_connection_resumed=resumed, will=offline_will(EDGE_ID))
     if use_iam:
         import boto3
         s = boto3.Session(region_name=region)
@@ -274,6 +294,24 @@ def main():
 
     n = 0
     last_frame = 0.0
+    started = time.monotonic()
+    cam_frames, cam_last, corners_seen, fps_mark = 0, 0.0, 0, (time.monotonic(), 0)
+
+    def publish_health(now: float):
+        nonlocal fps_mark
+        fps = (cam_frames - fps_mark[1]) / max(1e-6, now - fps_mark[0])
+        fps_mark = (now, cam_frames)
+        cam = ({"mode": "simulated"} if a.sim else {
+            "mode": "real", "fps": round(fps, 1), "frame_age_s": round(now - cam_last, 1) if cam_last else None,
+            "corner_tags_seen": corners_seen, "corner_tags_total": len(config.CORNER_TAGS),
+            "map_locked": localizer.H is not None if localizer else False,
+            "streaming": bool(config.CAMERA_STREAM_FPS)})
+        msg = {"source": EDGE_ID, "kind": "edge", "online": True, "uptime_s": int(now - started),
+               "map": os.environ.get("WAREHOUSE_MAP", "demo"), "sim": a.sim, "camera": cam,
+               "forklifts": {fid: u.health(now) for fid, u in units.items()}, "ts": int(time.time() * 1000)}
+        with lock:
+            conn.publish(topic=topics.health(EDGE_ID), payload=json.dumps(msg), qos=mqtt.QoS.AT_MOST_ONCE, retain=True)
+
     try:
         while True:
             t0 = time.monotonic()
@@ -281,7 +319,11 @@ def main():
                 seen = {fid: (u.link.x, u.link.y, u.link.theta) for fid, u in units.items()}
             else:
                 frame = camera.read()
-                poses = localizer.process(detector.detect(frame))
+                sightings = detector.detect(frame)
+                poses = localizer.process(sightings)
+                cam_frames += 1
+                cam_last = t0
+                corners_seen = sum(1 for sg in sightings if sg.tag_id in config.CORNER_TAGS)
                 if config.CAMERA_STREAM_FPS and t0 - last_frame >= 1 / config.CAMERA_STREAM_FPS:
                     last_frame = t0
                     jpg = encode_frame(frame)
@@ -296,11 +338,19 @@ def main():
                     publish(topics.pose(fid), Pose(x=round(x, 4), y=round(y, 4), theta=round(math.remainder(th, math.tau), 4)))
                 if n % config.COMMAND_RATE_HZ == 0:
                     u.telemetry()
+            if n % config.COMMAND_RATE_HZ == 0:
+                publish_health(t0)
             n += 1
             time.sleep(max(0.0, TICK_S - (time.monotonic() - t0)))
     except KeyboardInterrupt:
         pass
     finally:
+        try:  # say goodbye so the dashboard shows offline right away
+            with lock:
+                conn.publish(topic=topics.health(EDGE_ID), qos=mqtt.QoS.AT_LEAST_ONCE, retain=True,
+                             payload=json.dumps({"source": EDGE_ID, "online": False, "reason": "bridge stopped"}))
+        except Exception:  # noqa: BLE001
+            pass
         for u in units.values():
             u.link.close()
         if camera:

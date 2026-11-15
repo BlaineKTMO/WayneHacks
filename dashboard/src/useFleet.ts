@@ -6,6 +6,12 @@ import type { Config } from './config'
 import type { FleetEvent, Forklift, Graph, LogEntry, Path, Pose, Task, TaskStatus, Telemetry } from './types'
 
 export type Conn = 'connecting' | 'live' | 'offline'
+export type DeviceHealth = {
+  source: string; online: boolean; reason?: string; kind?: string; uptime_s?: number; map?: string; sim?: boolean
+  camera?: { mode: 'real' | 'simulated'; fps?: number; frame_age_s?: number | null; corner_tags_seen?: number; corner_tags_total?: number; map_locked?: boolean }
+  forklifts?: Record<string, { link: string; port?: string; telemetry_age_s?: number | null; fw_state?: string | null; battery_v?: number | null; tag_age_s?: number | null; state?: string }>
+  receivedAt: number
+}
 type ForkliftRow = {
   forklift_id: string; pose?: Pose; state?: Forklift['state']; battery_v?: number
   node?: string | null; last_event?: string; current_task?: string | null
@@ -24,6 +30,7 @@ export function useFleet(cfg: Config) {
   const [locks, setLocks] = useState<Record<string, string>>({})
   const [people, setPeople] = useState<{ x: number; y: number }[]>([])
   const [camera, setCamera] = useState<{ url: string; at: number }>()
+  const [health, setHealth] = useState<Record<string, DeviceHealth>>({})
   const [labTick, setLabTick] = useState(0)  // bumps when shadow/outcome/promotion data changes
   const [conn, setConn] = useState<Conn>('connecting')
   const [error, setError] = useState<string>()
@@ -139,6 +146,10 @@ export function useFleet(cfg: Config) {
       setLabTick((n) => n + 1)
       return
     }
+    if (p[0] === 'warehouse' && p[1] === 'health' && p[2]) {
+      setHealth((h) => ({ ...h, [p[2]]: { ...(msg as DeviceHealth), receivedAt: now } }))
+      return
+    }
     if (topic === 'warehouse/detections') {
       const objs = (msg.objects ?? []) as { cls: string; x: number; y: number }[]
       setPeople(objs.filter((o) => o.cls === 'person' || o.cls === 'obstacle').map((o) => ({ x: o.x, y: o.y })))
@@ -196,7 +207,7 @@ export function useFleet(cfg: Config) {
           setError(undefined)
           addLog('ok', 'Connected to fleet network')
           // AWS IoT Core allows at most 8 filters per SUBSCRIBE; more and it drops the connection.
-          c.subscribe(['fleet/+/+', 'tasks/+/+', 'warehouse/+', 'planners/+'])
+          c.subscribe(['fleet/+/+', 'tasks/+/+', 'warehouse/#', 'planners/+'])
         })
         c.on('message', onMessage)
         c.on('error', (e) => setError(`MQTT: ${e.message}`))
@@ -233,7 +244,7 @@ export function useFleet(cfg: Config) {
   const publish = (topic: string, payload: object) => client.current?.publish(topic, JSON.stringify(payload), { qos: 1 })
 
   return {
-    graph, forklifts, trails, tasks, pallets, locks, people, camera, log, stops, conn, error, labTick,
+    graph, forklifts, trails, tasks, pallets, locks, people, camera, health, log, stops, conn, error, labTick,
     placePerson: (x: number, y: number) => api(cfg, '/hazard', 'POST', { x, y }),
     clearPerson: () => api(cfg, '/hazard', 'POST', { clear: true }),
     resetDemo: () => api(cfg, '/demo/reset', 'POST'),

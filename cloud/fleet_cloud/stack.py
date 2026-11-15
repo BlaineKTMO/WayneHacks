@@ -220,13 +220,36 @@ class FleetStack(Stack):
                  "Resource": self.format_arn(service="iot", resource="client", resource_name="edge-*")},
                 {"Effect": "Allow", "Action": "iot:Publish",
                  "Resource": [topic("fleet/*"), topic("warehouse/*")]},
+                {"Effect": "Allow", "Action": "iot:RetainPublish",
+                 "Resource": [topic("warehouse/health/*")]},
                 {"Effect": "Allow", "Action": "iot:Subscribe",
                  "Resource": [topicfilter("fleet/*"), topicfilter("warehouse/*")]},
                 {"Effect": "Allow", "Action": "iot:Receive",
                  "Resource": [topic("fleet/*"), topic("warehouse/*")]},
             ],
         })
-        iot.CfnThing(self, "EdgeThing", thing_name="forklift-edge-01")
+        # Device registry (AWS IoT console > Things). Max 3 attributes each (no thing type in CFN). Only the edge laptop has a certificate: the
+        # Free-WiLis and the camera are wired to it, so they're registered for inventory/health.
+        devices = {
+            "EdgeThing": ("forklift-edge-01", {"role": "edge-laptop", "health_topic": "warehouse/health/edge-01"}),
+            "Fl01Thing": ("forklift-fl-01", {"role": "forklift", "controller": "free-wili-og", "fleet_id": "fl-01"}),
+            "Fl02Thing": ("forklift-fl-02", {"role": "forklift", "controller": "simulated", "fleet_id": "fl-02"}),
+            "CamThing": ("camera-01", {"role": "ceiling-camera", "model": "emeet-c950", "attached_to": "edge-01"}),
+        }
+        group = iot.CfnThingGroup(self, "FleetGroup", thing_group_name="fleet",
+                                  thing_group_properties=iot.CfnThingGroup.ThingGroupPropertiesProperty(
+                                      thing_group_description="Autonomous forklift fleet devices"))
+        for cid, (name, attrs) in devices.items():
+            thing = iot.CfnThing(self, cid, thing_name=name,
+                                 attribute_payload=iot.CfnThing.AttributePayloadProperty(attributes=attrs))
+            member = cr.AwsCustomResource(
+                self, f"{cid}Group",
+                on_create=cr.AwsSdkCall(service="Iot", action="addThingToThingGroup",
+                                        parameters={"thingName": name, "thingGroupName": "fleet"},
+                                        physical_resource_id=cr.PhysicalResourceId.of(f"fleet-{name}")),
+                policy=cr.AwsCustomResourcePolicy.from_sdk_calls(resources=cr.AwsCustomResourcePolicy.ANY_RESOURCE),
+                install_latest_aws_sdk=False)
+            member.node.add_dependency(thing, group)
 
         # ---------------- MLOps: SageMaker Processing role (mlops/run_sagemaker.py) -----
         sm_role = iam.Role(self, "SageMakerEvalRole", assumed_by=iam.ServicePrincipal("sagemaker.amazonaws.com"),

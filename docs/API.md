@@ -73,6 +73,7 @@ Payloads are UTF-8 JSON objects. Publish with QoS 1 unless noted. Build topics a
 | [`fleet/{id}/stop`](#fleetidstop) | edge or cloud → forklift | on demand | ✅ cloud/dashboard · 📐 edge safety-guard |
 | [`warehouse/detections`](#warehousedetections) | edge → cloud | 2 Hz | 📐 |
 | [`warehouse/locks`](#warehouselocks) | cloud → dashboard | on change | ✅ |
+| `warehouse/health/{source}` | edge, sim → dashboard | 1 Hz, retained | ✅ device health: `{source, online, camera{fps, frame_age_s, corner_tags_seen, map_locked}, forklifts{fid: {link, telemetry_age_s, fw_state, battery_v, tag_age_s}}}`. MQTT last will publishes `{online: false, reason}` if the edge drops off |
 | `warehouse/camera` | edge → dashboard | ~4 fps | ✅ raw JPEG bytes (not JSON), ≤ 110 KB, from `bridge.py` |
 | [`tasks/new`](#tasksnew) | dashboard → cloud | on demand | ✅ (records only) |
 | [`tasks/{task_id}/status`](#taskstask_idstatus) | cloud → dashboard | on change | ✅ |
@@ -620,7 +621,7 @@ The dashboard uses two channels: **MQTT over WebSocket** for anything live, and 
 
 ### MQTT (browser) ✅
 
-The dashboard subscribes to exactly 4 filters: `fleet/+/+`, `tasks/+/+`, `warehouse/+`, `planners/+`. **AWS IoT Core allows at most 8 filters per SUBSCRIBE and drops the connection if a request has more**, so keep wildcard filters rather than listing topics. Before connecting it calls `POST /iot/attach` once.
+The dashboard subscribes to exactly 4 filters: `fleet/+/+`, `tasks/+/+`, `warehouse/#`, `planners/+`. **AWS IoT Core allows at most 8 filters per SUBSCRIBE and drops the connection if a request has more**, so keep wildcard filters rather than listing topics. Before connecting it calls `POST /iot/attach` once.
 
 | Publish | For |
 |---|---|
@@ -676,6 +677,8 @@ Ring 1 runs the edge as plain scripts: 🧱 `python -m fleet_edge.step6_ring1`. 
 Shared config for every component comes from the Greengrass deployment as JSON: `{forklift_tags, corner_tags, serial_ports, camera_index}`. This replaces `config.py` on the laptop once Greengrass is in use.
 
 **MQTT reconnects:** connect with `clean_session=False`, and on `on_connection_resumed` with `session_present=False` call `resubscribe_existing_topics()`. Otherwise a dropped connection silently stops all incoming paths while outgoing telemetry keeps working (see `tools/sim_fleet.py`).
+
+**Registry:** AWS IoT things `forklift-edge-01`, `forklift-fl-01`, `forklift-fl-02`, `camera-01` in thing group `fleet` (attributes: role, controller, fleet id). Only the edge laptop has a certificate; the Free-WiLis and camera are wired to it and report through its health message.
 
 Cloud connection: thing `forklift-edge-01`, certificate from `cloud/scripts/create_edge_cert.py`, policy `ForkliftEdgePolicy` (§13). Use client ID `edge-01`.
 

@@ -7,6 +7,7 @@ import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { SimSwitch } from './SimSwitch'
 import { CameraFeed } from './CameraFeed'
+import { Devices } from './Devices'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 
@@ -161,6 +162,11 @@ export function ConsoleView({ fleet, email, signOut, cfg }: { fleet: Fleet; emai
               {PRESETS.map((p) => <button key={p} className="chip" disabled={fleet.conn !== 'live'} onClick={() => submit(undefined, p)}>{p}</button>)}
             </div>
             <PlanView task={fleet.tasks.find((t) => t.task_id.startsWith('t-'))} />
+          </section>
+
+          <section className="panel">
+            <div className="panel-head"><h2>Devices</h2></div>
+            <Devices health={fleet.health} />
           </section>
 
           <section className="panel">

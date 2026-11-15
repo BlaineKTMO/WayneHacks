@@ -84,6 +84,8 @@ class SerialLink:
         self.ser = serial.serial_for_url(port, baudrate=baud, timeout=0)
         self._buf = b""
         self.last_telemetry: FreeWiliTelemetry | None = None
+        self.last_telemetry_at = 0.0     # time.monotonic() of the last T line (0 = never)
+        self.port = port
 
     def wheels(self, left: float, right: float) -> None:
         self.ser.write(format_wheels(left, right).encode())
@@ -103,6 +105,7 @@ class SerialLink:
             t = parse_line(raw.decode(errors="replace"))
             if t:
                 self.last_telemetry = t
+                self.last_telemetry_at = time.monotonic()
         return self.last_telemetry
 
     def close(self) -> None:
@@ -120,6 +123,8 @@ class SimLink:
         self.state = "IDLE"
         self._t = time.monotonic()
         self.last_telemetry = FreeWiliTelemetry("IDLE", 7.4)
+        self.last_telemetry_at = time.monotonic()
+        self.port = "simulated"
 
     def _advance(self) -> None:
         now = time.monotonic()
@@ -152,6 +157,7 @@ class SimLink:
     def poll(self) -> FreeWiliTelemetry:
         self._advance()
         self.last_telemetry = FreeWiliTelemetry(self.state, 7.4)
+        self.last_telemetry_at = time.monotonic()
         return self.last_telemetry
 
     def close(self) -> None:

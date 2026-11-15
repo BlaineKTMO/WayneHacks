@@ -48,7 +48,8 @@ class SimFleet(Construct):
         forklifts_table.grant_read_data(task.task_role)
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:DescribeEndpoint"], resources=["*"]))
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Connect"], resources=[arn("client", "sim-*")]))
-        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Publish"], resources=[arn("topic", "fleet/*")]))
+        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Publish"], resources=[arn("topic", "fleet/*"), arn("topic", "warehouse/health/*")]))
+        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:RetainPublish"], resources=[arn("topic", "warehouse/health/*")]))
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Receive"],
                                                          resources=[arn("topic", "fleet/*"), arn("topic", "warehouse/*")]))
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Subscribe"],
