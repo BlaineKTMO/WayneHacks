@@ -212,6 +212,7 @@ def advance(fid: str) -> None:
 
     _mutate(fid, fn)
     if "path" in out:  # publish only after the state that matches it is saved
+        log.info("%s window -> %s (partial=%s)", fid, [n["id"] for n in out["path"].nodes], out["path"].partial)
         publish(topics.path(fid), out["path"].to_dict())
     publish_locks()
 

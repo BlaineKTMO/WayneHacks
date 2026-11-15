@@ -34,6 +34,7 @@ from fleet_shared.graph import Graph
 from fleet_shared.messages import Event, Path, Pose, Stop, Telemetry
 
 REGION = "us-east-2"
+VERBOSE = False
 START = {"fl-01": "dock_A", "fl-02": "dock_B"}
 TICK_S = 0.05            # 20 Hz control
 POSE_EVERY = 2           # 10 Hz pose
@@ -55,6 +56,8 @@ class SimForklift:
 
     # -- MQTT callbacks just queue; all state changes happen in tick() on one thread
     def on_message(self, kind: str, payload: bytes):
+        if VERBOSE:
+            print(f"[{self.fid}] <- {kind} {payload[:160]!r}", flush=True)
         self.inbox.put((kind, payload))
 
     def _handle(self, kind: str, payload: bytes):
@@ -141,7 +144,10 @@ def connect(client_id: str) -> mqtt.Connection:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("forklifts", nargs="*", default=list(START))
+    ap.add_argument("-v", "--verbose", action="store_true", help="print every received message")
     a = ap.parse_args()
+    global VERBOSE
+    VERBOSE = a.verbose
 
     graph = Graph.load()
     conn = connect(f"sim-{uuid.uuid4().hex[:6]}")

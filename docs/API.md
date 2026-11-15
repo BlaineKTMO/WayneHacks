@@ -72,6 +72,7 @@ Payloads are UTF-8 JSON objects. Publish with QoS 1 unless noted. Build topics a
 | [`fleet/{id}/path`](#fleetidpath) | cloud → edge/forklift | on change | ✅ |
 | [`fleet/{id}/stop`](#fleetidstop) | edge or cloud → forklift | on demand | 📐 |
 | [`warehouse/detections`](#warehousedetections) | edge → cloud | 2 Hz | 📐 |
+| [`warehouse/locks`](#warehouselocks) | cloud → dashboard | on change | ✅ |
 | [`tasks/new`](#tasksnew) | dashboard → cloud | on demand | ✅ (records only) |
 | [`tasks/{task_id}/status`](#taskstask_idstatus) | cloud → dashboard | on change | ✅ |
 | [`tasks/{task_id}/shadow`](#taskstask_idshadow) | cloud → dashboard | on change | 📐 |
@@ -177,6 +178,7 @@ The route a forklift should drive. A new path **replaces** the current one.
 | `task_id` | string | ✓ | |
 | `nodes` | array | ✓ | ordered `{id, x, y}`, starting with the forklift's current node |
 | `action` | string \| null | | `pick` \| `drop` \| null, done at the last node |
+| `partial` | boolean | | default `false`. `true` = only the reserved part of the route; stop at the last node and send `blocked` every ~2 s until a longer path arrives |
 
 ```json
 {"task_id": "goto-916e206c",
@@ -215,6 +217,14 @@ Things without tags that RF-DETR sees.
 ```
 
 Cloud handling (Ring 4): edges within 5 cm of an object are blocked for planning until the object clears.
+
+### `warehouse/locks`
+
+Current node reservations, published by the cloud whenever they change. The dashboard draws them.
+
+```json
+{"locks": {"j1": "fl-01", "j3": "fl-01", "dock_B": "fl-02"}, "ts": 1794685931200}
+```
 
 ### `tasks/new`
 
@@ -417,6 +427,9 @@ All tables are on-demand capacity with a string partition key and no sort key. F
 | `last_event` | S | Ingest | |
 | `current_task` | S \| NULL | RoutePlanner, Ingest | cleared on `done` |
 | `last_seen` | N | Ingest | epoch ms. The dashboard shows "offline" after 5 s |
+| `route`, `route_task`, `route_action`, `window_end` | L / S | traffic | remaining route (current node first) and the reserved window's end |
+| `blocked_since`, `blocked_first` | N | traffic | replan after 5 s blocked, give up after 45 s |
+| `route_rev` | N | traffic | optimistic-concurrency counter: every route change is conditional on it |
 
 ### `FleetTasks` ✅ (key `task_id`)
 
@@ -432,11 +445,13 @@ All tables are on-demand capacity with a string partition key and no sort key. F
 | `created_at`, `finished_at` | N | epoch ms |
 | `error` | S | |
 
-### `FleetEdgeLocks` 🧱 table exists, 📐 logic (key `edge_id`, TTL `expires_at`)
+### `FleetEdgeLocks` ✅ (key `edge_id`, TTL `expires_at`)
+
+**Ring 4 reserves nodes, not edges:** `edge_id` holds a node ID. A forklift holds its current node plus up to 2 nodes ahead; driving an edge needs both ends, which covers both head-on and junction conflicts. Parked forklifts keep their node, renewed by telemetry. Logic: `cloud/lambdas/traffic.py`.
 
 | Attribute | Type | Notes |
 |---|---|---|
-| `edge_id` | S | `j1\|j3` |
+| `edge_id` | S | node ID, e.g. `j3` |
 | `holder` | S | forklift ID |
 | `task_id` | S | |
 | `expires_at` | N | **epoch seconds**, now + 30 s, renewed on each `node_reached` |
