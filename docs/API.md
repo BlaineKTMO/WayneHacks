@@ -659,6 +659,8 @@ Ring 1 runs the edge as plain scripts: 🧱 `python -m fleet_edge.step6_ring1`. 
 
 Shared config for every component comes from the Greengrass deployment as JSON: `{forklift_tags, corner_tags, serial_ports, camera_index}`. This replaces `config.py` on the laptop once Greengrass is in use.
 
+**MQTT reconnects:** connect with `clean_session=False`, and on `on_connection_resumed` with `session_present=False` call `resubscribe_existing_topics()`. Otherwise a dropped connection silently stops all incoming paths while outgoing telemetry keeps working (see `tools/sim_fleet.py`).
+
 Cloud connection: thing `forklift-edge-01`, certificate from `cloud/scripts/create_edge_cert.py`, policy `ForkliftEdgePolicy` (§13). Use client ID `edge-01`.
 
 ---

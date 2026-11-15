@@ -133,9 +133,20 @@ def connect(client_id: str) -> mqtt.Connection:
     creds = session.get_credentials().get_frozen_credentials()
     provider = auth.AwsCredentialsProvider.new_static(creds.access_key, creds.secret_key, creds.token)
     endpoint = session.client("iot").describe_endpoint(endpointType="iot:Data-ATS")["endpointAddress"]
+    def interrupted(connection, error, **_):
+        print(f"!! MQTT connection interrupted: {error}", flush=True)
+
+    def resumed(connection, return_code, session_present, **_):
+        print(f"!! MQTT reconnected (session_present={session_present})", flush=True)
+        if not session_present:
+            # Broker forgot our subscriptions: without this we'd keep publishing but never hear back.
+            fut, _ = connection.resubscribe_existing_topics()
+            fut.add_done_callback(lambda f: print(f"!! resubscribed: {f.result()}", flush=True))
+
     conn = mqtt_connection_builder.websockets_with_default_aws_signing(
         endpoint=endpoint, region=REGION, credentials_provider=provider,
-        client_id=client_id, clean_session=True, keep_alive_secs=30)
+        client_id=client_id, clean_session=False, keep_alive_secs=30,
+        on_connection_interrupted=interrupted, on_connection_resumed=resumed)
     conn.connect().result(timeout=15)
     print(f"connected to {endpoint} as {client_id}")
     return conn
