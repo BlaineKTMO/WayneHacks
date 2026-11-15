@@ -47,8 +47,13 @@ BLOCKED_EVERY_S = 2.0
 class Unit:
     """One forklift: its link to the motors, its route, and what it reports."""
 
-    def __init__(self, fid: str, link, graph: Graph, publish, hazards: Hazards | None = None):
+    def __init__(self, fid: str, link, graph: Graph, publish, hazards: Hazards | None = None,
+                 follower_factory=None):
         self.fid, self.link, self.graph, self.publish = fid, link, graph, publish
+        # How a route is driven. Default (and --sim): pure pursuit, which the simulator was
+        # calibrated against. Real forklift: turn-then-drive inside the camera border
+        # (turn_drive.py), because this skid-steer chassis curves and slides under pure pursuit.
+        self.make_follower = follower_factory or (lambda wps: WaypointFollower(wps, loop=False))
         self.hazards = hazards or Hazards()
         self.guard = Guard()
         self.node: str | None = None
@@ -81,7 +86,7 @@ class Unit:
                     self.follower, self.path, self.state = None, None, "IDLE"
                     return
                 self.path = PathMsg(task_id=p.task_id, nodes=nodes, action=p.action, partial=p.partial)
-                self.follower = WaypointFollower([(n["x"], n["y"]) for n in nodes], loop=False)
+                self.follower = self.make_follower([(n["x"], n["y"]) for n in nodes])
                 self.state, self.waiting = "DRIVING", False
                 print(f"[{self.fid}] route {[n['id'] for n in nodes]}{' (partial)' if p.partial else ''}")
         except ValueError as e:
@@ -124,6 +129,16 @@ class Unit:
         if self.follower and self.pose:
             before = self.follower.index
             left, right = self.follower.update(*self.pose)
+            # turn_drive refusals: every move would lose the tag (blocked), the tag drifted out
+            # of the camera view (border), or spins keep sliding (drift_stop). Brake and give the
+            # route back as a fault rather than ever reporting it done.
+            mode = getattr(self.follower, "mode", "")
+            if mode in ("blocked", "border", "drift_stop"):
+                self.link.stop(mode)
+                print(f"[{self.fid}] route abandoned: {mode} near {self.node}")
+                self._event("fault")
+                self.follower, self.path, self.state, self.waiting = None, None, "STOPPED", False
+                return
             self.link.wheels(left, right)
             done_upto = len(self.path.nodes) if self.follower.finished else self.follower.index
             for i in range(before, done_upto):
@@ -203,6 +218,16 @@ def main():
     fut, _ = conn.subscribe(topic=topics.DETECTIONS, qos=mqtt.QoS.AT_LEAST_ONCE,
                             callback=lambda topic, payload, **_: hazards.on_detections(json.loads(payload)))
     fut.result(timeout=10)
+    camera = detector = localizer = None
+    factory = None
+    if not a.sim:
+        from .localizer import Camera, Localizer, TagDetector
+        from .turn_drive import TurnDriveFollower, border_from_camera
+        camera, detector = Camera(), TagDetector()
+        localizer = Localizer(camera.K)   # K: needed for the raised tag's height correction
+        border = border_from_camera(localizer, config.CAMERA_WIDTH, config.CAMERA_HEIGHT)
+        factory = lambda wps: TurnDriveFollower(wps, loop=False, border=border)  # noqa: E731
+
     units: dict[str, Unit] = {}
     fids = config.SIM_START if a.sim else config.FORKLIFT_LINKS
     for fid in fids:
@@ -211,17 +236,12 @@ def main():
             link = SimLink(x=start.x, y=start.y, theta=0.0)
         else:
             link = SerialLink(config.FORKLIFT_LINKS[fid])
-        units[fid] = Unit(fid, link, graph, publish, hazards)
+        units[fid] = Unit(fid, link, graph, publish, hazards, follower_factory=factory)
         for kind, topic in (("path", topics.path(fid)), ("stop", topics.stop(fid))):
             fut, _ = conn.subscribe(topic=topic, qos=mqtt.QoS.AT_LEAST_ONCE,
                                     callback=lambda topic, payload, u=units[fid], k=kind, **_: u.on_message(k, payload))
             fut.result(timeout=10)
     print(f"bridge up: {', '.join(units)} ({'sim' if a.sim else 'camera + Free-WiLi'})")
-
-    camera = detector = localizer = None
-    if not a.sim:
-        from .localizer import Camera, Localizer, TagDetector
-        camera, detector, localizer = Camera(), TagDetector(), Localizer()
 
     n = 0
     try:

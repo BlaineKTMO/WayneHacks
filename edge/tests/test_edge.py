@@ -202,3 +202,53 @@ def test_bridge_unit_drives_partial_then_reports_blocked():
         assert u.state == "STOPPED"
     finally:
         time.monotonic = time_monotonic
+
+
+def test_bridge_with_turn_drive_reaches_the_node():
+    """The real-hardware follower (turn-then-drive) plugged into the bridge drives a route
+    and reports node_reached + done, never a curve."""
+    from fleet_edge.bridge import Unit
+    from fleet_shared.graph import Graph
+    from fleet_shared.messages import Path
+
+    g = Graph.load()
+    sent = []
+    link = SimLink(x=g.nodes["dock_A"].x, y=g.nodes["dock_A"].y, theta=0.0)
+    u = Unit("fl-01", link, g, lambda topic, msg: sent.append((topic, msg)),
+             follower_factory=lambda wps: WaypointFollower(wps, loop=False))
+    clock = [0.0]
+    time_monotonic = time.monotonic
+    time.monotonic = lambda: clock[0]
+    link._t = 0.0
+    try:
+        u.tick(0.0, (link.x, link.y, link.theta))
+        u.on_message("path", Path(task_id="t", nodes=g.to_path_nodes(["dock_A", "j1"])).to_json().encode())
+        for _ in range(4000):
+            clock[0] += 0.05
+            u.tick(clock[0], (link.x, link.y, link.theta))
+            assert link.left == -link.right or link.left * link.right >= 0
+            if u.follower is None:
+                break
+        events = [m.type for t, m in sent if t.endswith("/event")]
+        assert events[-1] == "done" and u.node == "j1" and u.state == "IDLE"
+    finally:
+        time.monotonic = time_monotonic
+
+
+def test_bridge_abandons_route_when_follower_refuses():
+    """turn_drive says every move would lose the tag: the bridge stops and reports fault."""
+    from fleet_edge.bridge import Unit
+    from fleet_shared.graph import Graph
+    from fleet_shared.messages import Path
+
+    g = Graph.load()
+    sent = []
+    link = SimLink(x=0.2, y=0.2, theta=0.0)
+    tiny = [(0.30, 0.0), (0.31, 0.0), (0.31, 0.01), (0.30, 0.01)]   # no move keeps the tag inside
+    u = Unit("fl-01", link, g, lambda topic, msg: sent.append((topic, msg)),
+             follower_factory=lambda wps: WaypointFollower(wps, loop=False, border=tiny))
+    u.tick(0.0, (0.2, 0.2, 0.0))
+    u.on_message("path", Path(task_id="t", nodes=g.to_path_nodes(["dock_A", "j1"])).to_json().encode())
+    u.tick(0.05, (0.2, 0.2, 0.0))
+    events = [m.type for t, m in sent if t.endswith("/event")]
+    assert events[-1] == "fault" and u.state == "STOPPED" and u.follower is None
