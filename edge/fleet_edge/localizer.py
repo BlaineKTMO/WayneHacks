@@ -114,6 +114,8 @@ class Localizer:
         self.R: np.ndarray | None = None       # camera pose from the corner tags (world -> camera)
         self.cam_pos: np.ndarray | None = None  # camera centre in world metres
         self.filtered: dict[str, ForkliftPose] = {}
+        self._saved_at = 0.0
+        self._load_map()
         if K is None and config.FORKLIFT_TAG_HEIGHT_M > 0:
             print(f"[localizer] no lens calibration: forklift tags are mapped as if on the table, "
                   f"ignoring their {config.FORKLIFT_TAG_HEIGHT_M * 1000:.0f} mm height (positions will be off)")
@@ -121,7 +123,7 @@ class Localizer:
     def update_homography(self, sightings: list[TagSighting]) -> bool:
         seen = {s.tag_id: s for s in sightings if s.tag_id in config.CORNER_TAGS}
         if len(seen) < 4:
-            return self.H is not None  # keep the last good one
+            return self.H is not None  # keep the last good one (or the one loaded from disk)
         px = np.array([seen[i].center_px for i in sorted(seen)], dtype=np.float64)
         world = np.array([config.CORNER_TAGS[i] for i in sorted(seen)], dtype=np.float64)
         self.H, _ = cv2.findHomography(px, world)
@@ -131,7 +133,32 @@ class Localizer:
             if ok:
                 self.R, _ = cv2.Rodrigues(rvec)
                 self.cam_pos = (-self.R.T @ tvec).ravel()
+        if time.monotonic() - self._saved_at > 10:
+            self._save_map()
         return True
+
+    def _save_map(self) -> None:
+        try:
+            Path(config.TABLE_MAP_FILE).parent.mkdir(parents=True, exist_ok=True)
+            extra = {} if self.R is None else {"R": self.R, "cam_pos": self.cam_pos}
+            np.savez(config.TABLE_MAP_FILE, H=self.H,
+                     corners=np.array(sorted(config.CORNER_TAGS.items()), dtype=object), **extra)
+            self._saved_at = time.monotonic()
+        except OSError as e:
+            print(f"[localizer] could not save table map: {e}")
+
+    def _load_map(self) -> None:
+        f = Path(config.TABLE_MAP_FILE)
+        if not f.exists():
+            return
+        d = np.load(f, allow_pickle=True)
+        if [tuple(c) for c in d["corners"]] != sorted(config.CORNER_TAGS.items()):
+            print("[localizer] saved table map is for different CORNER_TAGS; ignoring it")
+            return
+        self.H = d["H"]
+        if self.K is not None and "R" in d:
+            self.R, self.cam_pos = d["R"], d["cam_pos"]
+        print(f"[localizer] loaded table map from {f} (refreshed whenever all 4 corner tags are visible)")
 
     def to_world(self, px: tuple[float, float], height: float = 0.0) -> tuple[float, float]:
         """Pixel -> world (x, y) on the plane `height` metres above the table."""

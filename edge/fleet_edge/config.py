@@ -8,6 +8,9 @@ CAMERA_INDEX = 2              # eMeet C950 (/dev/video2). 0 is the laptop's buil
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
 CALIBRATION_FILE = "edge/calibration/camera.npz"   # written by step2_calibrate / calib_auto
+# Last table map (built whenever all 4 corner tags are visible). Loaded at startup, so the
+# forklift or its wires covering a corner tag doesn't stop localization.
+TABLE_MAP_FILE = "edge/calibration/table_map.npz"
 # Chessboard INNER corners (columns, rows) = squares - 1. Ours: 11x8 squares -> 10x7.
 CHESSBOARD_INNER = (10, 7)
 
