@@ -28,7 +28,7 @@ Wire by **header pin number** (the 1–20 printed on the OG). The GPIO column is
 | OG header pin | Goes to | Job | (GPIO in code) |
 |---|---|---|---|
 | **9** | IN1 on **driver 1 and driver 2** | Left side | 8 |
-| **11** | IN2 on **driver 1 and driver 2** | Left side | 11 |
+| **17** | IN2 on **driver 1 and driver 2** | Left side | 25 |
 | **15** | IN3 on **driver 1 and driver 2** | Right side | 14 |
 | **13** | IN4 on **driver 1 and driver 2** | Right side | 15 |
 | **1** | IN1 on **driver 3** | Fork | 13 |
@@ -46,9 +46,10 @@ Wire by **header pin number** (the 1–20 printed on the OG). The GPIO column is
 - **If a wheel spins the wrong way,** swap that motor's two wires at its driver's OUT terminals. Don't swap header pins.
 - **Motor battery** goes to every driver's `12V` terminal, never through the Free-WiLi. Leave each L298N's 5 V regulator jumper on so it powers its own logic. Use a 2S LiPo (7.4 V) or 6×AA: the L298N loses about 2 V, so 4×AA leaves small motors weak.
 - 3.3 V logic from the OG is enough for the L298N's inputs (it needs 2.3 V for a high).
-- Header pins 4 and 6 are only the I/O supply. Nothing else connects to them. Header pin 17 is the one spare output.
+- Header pins 4 and 6 are only the I/O supply. Nothing else connects to them.
+- **Header pin 11 is not used.** On two different boards it never followed the firmware (stuck at 0 V on one, 3.3 V on the other). Left IN2 uses pin 17 instead. Pin 17 is also the main CPU's LED, so that LED lights while the left side reverses. There is no spare output left.
 
-These six pins are already outputs in the board's default setup, so the firmware never changes a pin's direction. That BSP path has never been tested on hardware, and we avoid it on purpose.
+These six pins (1, 3, 9, 13, 15, 17) are already outputs in the board's default setup, so the firmware never changes a pin's direction. That BSP path has never been tested on hardware, and we avoid it on purpose.
 
 ### Power
 
@@ -111,7 +112,7 @@ Rules from the BSP worth knowing (details in [wiliOGbsp/AGENTS.md](wiliOGbsp/AGE
 |---|---|---|
 | 1 | Power on, no drivers connected | Screen shows `FL-01` and `IDLE`. `FAULT` means main couldn't take over the pins (see below). |
 | 2 | `uv run python -m fleet_edge.step5_serial_monitor` | `T,IDLE,0.00` arrives every second |
-| 3 | `uv run python -m fleet_edge.step4_motors`, hold `w` at speed 40 | A multimeter on header pin 9 reads about 40% of 3.3 V (≈1.3 V); pin 11 reads 0 V. Hold `s`: the two swap. |
+| 3 | `uv run python -m fleet_edge.step4_motors`, hold `w` at speed 40 | A multimeter on header pin 9 reads about 40% of 3.3 V (≈1.3 V); pin 17 reads 0 V. Hold `s`: the two swap. |
 | 4 | Still in step 4, press `r` repeatedly | Header pin 1 reads about 60% of 3.3 V while it runs; pin 3 reads 0 V |
 | 5 | Connect drivers + motors, **wheels in the air**, motor battery on after `IDLE` | `w` turns all four wheels forward, `a`/`d` spin left and right sides opposite ways, `r`/`f` move the fork in short bursts |
 | 6 | Unplug USB while driving | Everything stops within 0.5 s |

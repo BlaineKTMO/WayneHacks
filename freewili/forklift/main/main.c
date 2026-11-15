@@ -38,7 +38,11 @@
 FWOG_WATCHDOG_DEFAULT();
 
 #define PIN_LEFT_A  8u    /* hdr 9  */
-#define PIN_LEFT_B  11u   /* hdr 11 */
+/* Not hdr 11 (GPIO 11): on two boards it never followed the firmware (stuck at 0 V on
+ * one, 3.3 V on the other, with nothing attached). Hdr 17 is GPIO 25, which is also the
+ * main CPU's LED, so the LED lights while the left side reverses. PWM slice 4B; GPIO 8
+ * (LEFT_A) is 4A, same frequency, so sharing the slice is fine. */
+#define PIN_LEFT_B  25u   /* hdr 17 */
 #define PIN_RIGHT_A 14u   /* hdr 15 */
 #define PIN_RIGHT_B 15u   /* hdr 13 */
 #define PIN_FORK_A  13u   /* hdr 1  */
@@ -210,7 +214,7 @@ static void handle_line(const char *line, absolute_time_t *last_cmd) {
 int main(void) {
     board_init();
 
-    /* Left side braked immediately: GPIO 8/11 are not in the FPGA SPI group, so they
+    /* Left side braked immediately: GPIO 8/25 are not in the FPGA SPI group, so they
        can be claimed before the display is up. The rest wait for try_io_ready(). */
     pwm_pin_init(PIN_LEFT_A);
     pwm_pin_init(PIN_LEFT_B);
