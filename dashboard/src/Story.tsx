@@ -5,21 +5,19 @@ import './story.css'
 const MAX = 40
 const usd = (v: number) => v >= 1e6 ? `$${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M` : `$${Math.round(v / 1000)}K`
 
-type Inputs = { kit: number; perTruck: number; camera: number; zones: number; edge: number }
-const DEFAULTS: Inputs = { kit: 35000, perTruck: 1500, camera: 500, zones: 10, edge: 3000 }
+type Inputs = { kit: number; perTruck: number; site: number }
+const DEFAULTS: Inputs = { kit: 35000, perTruck: 1500, site: 70000 }
 const FIELDS: { k: keyof Inputs; label: string; side: 'a' | 'b'; note: string }[] = [
   { k: 'kit', label: 'Autonomy kit, per truck', side: 'a', note: '1' },
   { k: 'perTruck', label: 'Drive-by-wire + roof tag, per truck', side: 'b', note: '2' },
-  { k: 'camera', label: 'Ceiling camera, each', side: 'b', note: '2' },
-  { k: 'zones', label: 'Cameras to cover the floor', side: 'b', note: '2' },
-  { k: 'edge', label: 'Edge computer, per site', side: 'b', note: '2' },
+  { k: 'site', label: 'FLOE site price (cameras, edge, software)', side: 'b', note: '2' },
 ]
 
 export function Problem() {
   const [n, setN] = useState(12)
   const [v, setV] = useState<Inputs>(DEFAULTS)
   const costA = (k: number) => k * v.kit
-  const costB = (k: number) => k * v.perTruck + v.zones * v.camera + v.edge
+  const costB = (k: number) => v.site + k * v.perTruck
   const top = Math.max(costA(MAX), costB(MAX)) || 1
   const W = 640, H = 260, P = { l: 56, r: 16, t: 16, b: 34 }
   const x = (k: number) => P.l + ((k - 1) / (MAX - 1)) * (W - P.l - P.r)
@@ -64,7 +62,7 @@ export function Problem() {
         <input type="range" min={1} max={MAX} value={n} onChange={(e) => setN(+e.target.value)} className="s-range" aria-label="Forklifts in the fleet" />
         <p className="s-caption"><b>{n} forklift{n > 1 ? 's' : ''}.</b>{' '}
           {a > b ? `FLOE comes out ${usd(a - b)} cheaper (${Math.round((1 - b / a) * 100)}% less). Each extra truck costs ${usd(v.perTruck)} instead of ${usd(v.kit)}.`
-            : even ? `At this size per-truck kits are cheaper. FLOE becomes cheaper at ${even} trucks.` : 'With these numbers, per-truck kits stay cheaper.'}</p>
+            : even ? `FLOE costs more up front because of the ${usd(v.site)} site price. It becomes cheaper from truck ${even}.` : 'With these numbers, per-truck kits stay cheaper.'}</p>
 
         <details className="s-assume">
           <summary>Assumptions</summary>
@@ -72,7 +70,7 @@ export function Problem() {
             {FIELDS.map((f) => (
               <label key={f.k} className={`s-field s-${f.side}`}>
                 <span>{f.label}<sup><a href="#notes">{f.note}</a></sup></span>
-                <input type="number" min={0} step={f.k === 'zones' ? 1 : 100} value={v[f.k]}
+                <input type="number" min={0} step={f.k === 'site' ? 1000 : 100} value={v[f.k]}
                        onChange={(e) => setV({ ...v, [f.k]: Math.max(0, +e.target.value || 0) })} />
               </label>
             ))}
@@ -108,7 +106,7 @@ export function Notes() {
   return (
     <ol id="notes" className="s-notes">
       <li>Low end of the $35K–$65K quoted for a Balyo kit plus conversion (<a href="https://www.grabarobot.com/blog/autonomous-forklift-robot-warehouse-2026/" target="_blank" rel="noreferrer">Grab a Robot, 2026 buying guide</a>). Complete autonomous forklifts run about $75K–$150K for standard pallet handling (<a href="https://www.agvnetwork.com/agv-cost-estimation-how-much-does-an-automated-guided-vehicle-cost" target="_blank" rel="noreferrer">AGV Network</a>). We use the low figure on purpose.</li>
-      <li>Our estimates, not quotes: an industrial ceiling camera per aisle zone, one edge PC per site, and a drive-by-wire interface plus printed AprilTag per truck. Both sides exclude integration (often ~30% more), installation and running costs, including FLOE’s AWS bill.</li>
+      <li>Our planned pricing, not a quote: $70K per site covers the ceiling cameras, the edge computer, installation and the software. Each truck then needs a drive-by-wire interface and a printed AprilTag, which we estimate at $1.5K. Per-truck kits exclude integration (often ~30% more), and neither side includes running costs such as FLOE’s AWS bill.</li>
       <li>“~1.3 s” is the median planning time on Amazon Bedrock over 40 recorded orders (FleetTasks); checking the plan adds milliseconds. “&lt;0.5 s” is the Free-WiLi watchdog timeout.</li>
       <li>Snapshot of FleetPlanners and FleetTasks on 15 Nov 2026. Offline gate: SageMaker Processing job running <code>mlops/evaluate.py</code> over 23 recorded orders. Live: 33 orders where the candidate planned in shadow alongside prod. Production started on a deliberately weak prompt; see the caveats in the learning section.</li>
     </ol>
@@ -171,8 +169,8 @@ function ScaleAnim() {
     const t = setInterval(() => { i += 1; setN(i); if (i >= FLEET) clearInterval(t) }, 650)
     return () => clearInterval(t)
   }, [seen, run])
-  const fixed = DEFAULTS.zones * DEFAULTS.camera + DEFAULTS.edge
-  const a = n * DEFAULTS.kit, b = n ? fixed + n * DEFAULTS.perTruck : fixed
+  const a = n * DEFAULTS.kit, b = DEFAULTS.site + n * DEFAULTS.perTruck
+  const crossover = Math.ceil(DEFAULTS.site / (DEFAULTS.kit - DEFAULTS.perTruck) + 1e-9)
 
   return (
     <div className="sa" ref={ref}>
@@ -193,9 +191,10 @@ function ScaleAnim() {
         <div className="sa-panel">
           <div className="sa-label"><span className="sa-pill b">FLOE</span><b key={b} className="sa-total b">{usd(b)}</b></div>
           <Floor n={n} mode="b" />
-          <p>The ceiling cameras already cover the floor, so a new truck only needs a tag and drive-by-wire.</p>
+          <p>You pay for the site once. After that a new truck only needs a tag and drive-by-wire.</p>
         </div>
       </div>
+      <p className={`sa-verdict ${a > b ? 'win' : ''}`}>{n < crossover ? `FLOE starts out more expensive: the ${usd(DEFAULTS.site)} site cost comes first.` : n === crossover ? `Truck ${crossover}: FLOE is now the cheaper fleet.` : `FLOE is ${usd(a - b)} cheaper, and the gap grows with every truck.`}</p>
     </div>
   )
 }

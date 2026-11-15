@@ -52,3 +52,5 @@
   .sa-truck, .sa-lidar, .sa-zone, .sa-pop, .sa-total { animation: none; }
   .sa-cost { display: none; }
 }
+.sa-verdict { margin: 16px 0 0; text-align: center; font-size: 17px; font-weight: 600; color: var(--muted); }
+.sa-verdict.win { color: var(--ok); }
