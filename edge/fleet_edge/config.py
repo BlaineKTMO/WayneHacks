@@ -32,6 +32,11 @@ TAG_HEADING_OFFSET = 0.0
 SERIAL_PORT = "/dev/tty.usbmodem1101"   # run `ls /dev/tty.usb*` with the Free-WiLi plugged in
 SERIAL_BAUD = 115200
 COMMAND_RATE_HZ = 20          # how often we send W lines
+
+# bridge.py (Ring 2+): which forklift is wired to which Free-WiLi. Only these are driven.
+FORKLIFT_LINKS = {"fl-01": SERIAL_PORT}
+# Add the second one when it exists, e.g.  "fl-02": "/dev/tty.usbmodem2101"
+SIM_START = {"fl-01": "dock_A", "fl-02": "dock_B"}   # --sim only: where simulated forklifts begin
 LOST_TAG_STOP_S = 0.3         # tag not seen for this long -> send S (stop). Must stop within 0.5 s.
 
 # ---------------------------------------------------------------- driving
