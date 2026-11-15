@@ -151,7 +151,7 @@ def _mutate(fid: str, fn) -> dict:
 
 
 CLEARED = dict(route=None, route_task=None, route_action=None, window_end=None,
-               blocked_since=None, blocked_first=None)
+               blocked_since=None, blocked_first=None, resume_goal=None, resume_action=None)
 
 
 def _route_avoiding_others(start: str, goal: str, fid: str) -> list[str] | None:
@@ -274,9 +274,69 @@ def make_way(fid: str, route: list[str]) -> list[str]:
     return moved
 
 
+DEADLOCK_AFTER_MS = 2_000
+
+
+def break_deadlock(fid: str) -> bool:
+    """Two busy forklifts each waiting on a node the other holds: rerouting can't help (each sits on
+    the other's way) and make-way only moves idle forklifts. The higher-numbered one yields: it
+    detours to the nearest free spot off the other's route, then carries on with its own job
+    (finish_detour). Returns True if this forklift started a detour."""
+    me = _forklift(fid)
+    route = me.get("route")
+    if not route or len(route) < 2 or not me.get("blocked_since") or me.get("resume_goal"):
+        return False
+    if now_ms() - int(me["blocked_since"]) < DEADLOCK_AFTER_MS:
+        return False
+    held = LOCKS.held()
+    other_id = held.get(route[1])
+    if not other_id or other_id == fid or fid < other_id:   # only the higher id yields
+        return False
+    other = _forklift(other_id)
+    o_route = other.get("route") or []
+    if not (other.get("blocked_since") and len(o_route) > 1 and held.get(o_route[1]) == fid):
+        return False                                       # not mutual: normal waiting / replanning
+    keep_clear = set(o_route) | set(route[1:2])
+    best, best_d = None, float("inf")
+    for n in GRAPH.nodes.values():
+        if n.type != "junction" or n.id in keep_clear or n.id in held:
+            continue
+        r = _route_avoiding_others(route[0], n.id, fid)
+        if r and not (set(r[1:]) & set(o_route)) and GRAPH.path_length(r) < best_d:
+            best, best_d = n.id, GRAPH.path_length(r)
+    if not best:
+        return False
+    log.info("deadlock %s <-> %s: %s detours to %s, then resumes to %s", fid, other_id, fid, best, route[-1])
+    detour = _route_avoiding_others(route[0], best, fid)
+    for n, h in held.items():
+        if h == fid and n != route[0]:
+            LOCKS.release(n, fid)
+    _mutate(fid, lambda f: {"route": detour, "window_end": None, "blocked_since": None, "blocked_first": None,
+                            "resume_goal": route[-1], "resume_action": f.get("route_action"), "route_action": None})
+    advance(fid)
+    return True
+
+
+def finish_detour(fid: str) -> bool:
+    """Arrived at a deadlock detour spot: resume the original route. True = this 'done' was the detour's,
+    so the task must not count it as a finished step."""
+    f = _forklift(fid)
+    goal = f.get("resume_goal")
+    if not goal:
+        return False
+    task, action = f.get("route_task") or "-", f.get("resume_action")
+    _mutate(fid, lambda _f: {"resume_goal": None, "resume_action": None})
+    log.info("%s detour done: resuming to %s", fid, goal)
+    if not start_route(fid, goal, task, action):
+        return False   # already there (unlikely): let the task see the 'done'
+    return True
+
+
 def on_blocked(fid: str) -> str | None:
     """Forklift is waiting at the end of its window. Returns an error string if we gave up."""
     advance(fid)
+    if break_deadlock(fid):
+        return None
     f = _forklift(fid)
     if f.get("route") and f.get("blocked_since"):
         make_way(fid, f["route"])  # backup: someone parked on our route after we started
@@ -355,6 +415,8 @@ def retry_if_stuck(fid: str, reported_state: str | None = None) -> str | None:
     f = _forklift(fid)
     route = f.get("route")
     if route and f.get("blocked_since"):
+        if break_deadlock(fid):
+            return None
         return on_blocked(fid)
     end = f.get("window_end")
     if route and end in route and reported_state == "IDLE" \

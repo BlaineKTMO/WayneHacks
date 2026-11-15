@@ -156,3 +156,24 @@ def test_forklift_leaves_dead_end_after_job(monkeypatch):
 def test_single_forklift_site_does_not_park(monkeypatch):
     install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_B"}])
     assert traffic.park_if_dead_end("fl-01") is None
+
+
+def test_head_on_deadlock_one_forklift_detours_then_resumes(monkeypatch):
+    tables, locks, sent = install(monkeypatch, [{"forklift_id": "fl-01", "node": "j1"},
+                                                {"forklift_id": "fl-02", "node": "j3"}])
+    F = tables["FORKLIFTS_TABLE"].items
+    locks.acquire("j1", "fl-01"); locks.acquire("j3", "fl-02")
+    # fl-01 wants j1 -> j3 -> slot_A3 ; fl-02 wants j3 -> j1 -> dock_A : head-on on the j1-j3 lane
+    F["fl-01"].update(route=["j1", "j3", "slot_A3"], route_task="t1", blocked_since=1, blocked_first=traffic.now_ms())
+    F["fl-02"].update(route=["j3", "j1", "dock_A"], route_task="t2", blocked_since=1, blocked_first=traffic.now_ms())
+    assert traffic.break_deadlock("fl-01") is False             # lower id never yields
+    assert traffic.break_deadlock("fl-02") is True              # higher id detours
+    detour = F["fl-02"]["route"]
+    assert F["fl-02"]["resume_goal"] == "dock_A" and "j1" not in detour and detour[-1] != "j3"
+    # it arrives at the detour spot -> resumes its own route; the task never saw a 'done'
+    F["fl-02"]["node"] = detour[-1]
+    for n in detour[:-1]:
+        locks.release(n, "fl-02")
+    locks.acquire(detour[-1], "fl-02")
+    assert traffic.finish_detour("fl-02") is True
+    assert F["fl-02"]["route"][-1] == "dock_A" and not F["fl-02"].get("resume_goal")

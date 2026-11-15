@@ -70,6 +70,8 @@ def handler(msg, _ctx):
             if not first_delivery(fid, parsed.ts):
                 log.info("duplicate %s from %s (ts %s) ignored", parsed.type, fid, parsed.ts)
                 return
+            if parsed.type == "done" and traffic.finish_detour(fid):
+                return   # reached a deadlock detour spot: it has resumed its route, the task goes on
             traffic.on_done(fid, parsed.node)
             on_task_event(fid, parsed.type)
             mission.poke()                    # free forklift: next mission move, if any...
