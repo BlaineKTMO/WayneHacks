@@ -191,6 +191,7 @@ class Localizer:
             uy = s.center_px[1] + 20 * math.sin(s.heading_px)
             hx, hy = self.to_world((ux, uy), h)
             theta = math.atan2(hy - y, hx - x) + config.TAG_HEADING_OFFSET
+            theta = (theta + math.pi) % (2 * math.pi) - math.pi   # keep in [-pi, pi)
             # Tag position -> chassis centre.
             fwd, left = config.TAG_OFFSET_FORWARD_M, config.TAG_OFFSET_LEFT_M
             x -= fwd * math.cos(theta) - left * math.sin(theta)
