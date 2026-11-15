@@ -53,9 +53,14 @@ if(NOT _rc EQUAL 0 OR NOT FWOG_GIT_COMMIT_TS MATCHES "^[0-9]+$")
     set(FWOG_GIT_COMMIT_TS 0)
 endif()
 
+# The forklifts' screens are mounted on their side (Nov 15). 90 or 270 depending on which
+# way round; 0 = landscape. 270 = text upright on the mounted screens (checked on fl-01).
+set(FORKLIFT_SCREEN_ROTATION 270 CACHE STRING "Forklift screen rotation: 0, 90 or 270")
+
 # Display half first: the main UF2 carries it inside.
-add_executable(forklift_display display/main.c)
+add_executable(forklift_display display/main.c display/vtext.c)
 target_link_libraries(forklift_display fwog_display_bsp)
+target_compile_definitions(forklift_display PRIVATE SCREEN_ROTATION=${FORKLIFT_SCREEN_ROTATION})
 fwog_display_app(forklift_display
     VERSION 001
     DESCRIPTION "Forklift: services breakout I/O for main, shows ID and state")
@@ -73,26 +78,46 @@ fwog_main_app(forklift_main
 
 # Radio base station: a second OG on the laptop's USB, relaying the same lines to the
 # forklift over the CC1101 (main/rf_link.h). Same display app, built with a BASE title.
-add_executable(flbase_display display/main.c)
+add_executable(flbase_display display/main.c display/vtext.c)
 target_link_libraries(flbase_display fwog_display_bsp)
 target_compile_definitions(flbase_display PRIVATE BASE_STATION=1)
 fwog_display_app(flbase_display
     VERSION 001
     DESCRIPTION "Forklift radio base: shows BASE and the forklift's state")
 
-add_executable(flbase_main base/main.c main/motor_proto.c main/rf_proto.c main/rf_link.c)
+add_executable(flbase_main base/main.c main/motor_proto.c main/rf_proto.c main/rf_sched.c main/rf_link.c)
 target_link_libraries(flbase_main fwog_main_bsp hardware_uart)
 target_compile_definitions(flbase_main PRIVATE PICO_STDIO_USB_STDOUT_TIMEOUT_US=20000)
 fwog_embed_display_image(flbase_main)
 fwog_main_app(flbase_main
     VERSION 001
-    DESCRIPTION "Forklift radio base: laptop USB lines <-> 915 MHz CC1101 <-> forklift OG")
+    DESCRIPTION "Forklift radio base: laptop USB lines <-> 915 MHz CC1101 <-> forklift OGs (by id)")
+
+# Second forklift, fl-02: same wiring as fl-01 minus the fork (no driver 3). Radio id 2,
+# screen "FL-02", USB product "FWOG main fl02". Same sources, different switches.
+add_executable(fl02_display display/main.c display/vtext.c)
+target_link_libraries(fl02_display fwog_display_bsp)
+target_compile_definitions(fl02_display PRIVATE FORKLIFT_NAME="FL-02"
+    SCREEN_ROTATION=${FORKLIFT_SCREEN_ROTATION})
+fwog_display_app(fl02_display
+    VERSION 001
+    DESCRIPTION "Forklift fl-02 (no fork): services breakout I/O for main, shows ID and state")
+
+add_executable(fl02_main main/main.c main/motor_proto.c main/byte_ring.c main/wifi_link.c
+    main/rf_proto.c main/rf_link.c)
+target_link_libraries(fl02_main fwog_main_bsp hardware_pwm hardware_uart hardware_i2c pico_i2c_slave)
+target_compile_definitions(fl02_main PRIVATE PICO_STDIO_USB_STDOUT_TIMEOUT_US=20000
+    RF_FORKLIFT_ID=2 FORKLIFT_HAS_FORK=0)
+fwog_embed_display_image(fl02_main)
+fwog_main_app(fl02_main
+    VERSION 001
+    DESCRIPTION "Forklift fl-02 (no fork): W/S lines over USB, WiFi or 915 MHz radio drive 2 L298Ns; 500 ms watchdog")
 
 # Diagnostic only: run the radio link at 433.92 MHz on the 400 MHz antenna path (the
 # configuration the BSP's bench loopback verified). Not for normal use in the US.
 option(FORKLIFT_RF_TEST_433 "Radio diagnostic build at 433.92 MHz" OFF)
 if(FORKLIFT_RF_TEST_433)
-    foreach(t forklift_main forklift_display flbase_main flbase_display)
+    foreach(t forklift_main forklift_display flbase_main flbase_display fl02_main fl02_display)
         target_compile_definitions(${t} PRIVATE RF_TEST_433=1)
     endforeach()
 endif()

@@ -252,3 +252,65 @@ def test_bridge_abandons_route_when_follower_refuses():
     u.tick(0.05, (0.2, 0.2, 0.0))
     events = [m.type for t, m in sent if t.endswith("/event")]
     assert events[-1] == "fault" and u.state == "STOPPED" and u.follower is None
+
+
+def test_any_forklift_tag_in_view_is_enough(monkeypatch):
+    """Two tags: the follower keeps going while EITHER is inside its border, stops only
+    when both are out, and plans moves that keep at least one in view."""
+    from fleet_edge import config
+    from fleet_edge.turn_drive import TurnDriveFollower, in_view, tags_at
+    monkeypatch.setattr(config, "TAG_MOUNTS", {
+        13: dict(height=0.08, fwd=-0.08, left=0.0, heading=0.0),
+        16: dict(height=0.10, fwd=0.08, left=0.0, heading=0.0)})
+    box = [(0.0, 0.0), (0.20, 0.0), (0.20, 0.30), (0.0, 0.30)]   # x <= 0.20 is in view
+    border = {13: box, 16: box}
+    # Facing +x at x=0.20: tag 13 (behind) at 0.12 is in, tag 16 (ahead) at 0.28 is out.
+    pts = tags_at(0.20, 0.15, 0.0)
+    assert pts[13][0] < 0.20 < pts[16][0]
+    assert in_view(border, 0.20, 0.15, 0.0)
+    assert not in_view(border, 0.30, 0.15, 0.0)          # both tags out
+    f = TurnDriveFollower([(0.24, 0.15)], loop=False, border=border)
+    f.update(0.20, 0.15, 0.0)
+    assert f.mode != "border"
+    f = TurnDriveFollower([(0.24, 0.15)], loop=False, border=border)
+    assert f.update(0.30, 0.15, 0.0) == (0, 0) and f.mode == "border"
+    # A leg that runs every tag out of view part-way is refused even if the end is fine
+    # for a different tag (13 in at the start, out in the middle; 16 only in at the end).
+    gap = {13: [(0.0, 0.0), (0.10, 0.0), (0.10, 0.3), (0.0, 0.3)],
+           16: [(0.40, 0.0), (0.60, 0.0), (0.60, 0.3), (0.40, 0.3)]}
+    f = TurnDriveFollower([(0.40, 0.15)], loop=False, border=gap)
+    assert not f.move_is_safe(0.10, 0.15, 0.0, 0.0, False, 0.40, 0.15)
+
+
+def test_radio_hub_routes_lines_per_forklift():
+    """One base station, two forklifts: commands carry "<id>:", telemetry is routed back
+    by its prefix (forklift 1 may answer unprefixed)."""
+    from fleet_edge.freewili_link import RadioHub, RadioLink, split_addr
+    assert split_addr("2:T,IDLE,0.00") == (2, "T,IDLE,0.00")
+    assert split_addr("T,IDLE,0.00") == (1, "T,IDLE,0.00")
+    hub = RadioHub("loop://")
+    one, two = RadioLink(hub, 1), RadioLink(hub, 2)
+    two.wheels(45, 38)
+    one.stop("x")
+    assert hub.ser.read(100) == b"2:W,45,38\n1:S,x\n"
+    hub.ser.write(b"T,DRIVING,0.00\n2:T,IDLE,0.00\n2:T,NO_RADIO,0.00\n")
+    assert one.poll().state == "DRIVING"
+    assert two.poll().state == "NO_RADIO"
+    two.close()
+    one.close()
+    assert not hub.ser.is_open
+
+
+def test_border_counts_only_this_forklifts_tags(monkeypatch):
+    """fl-02's tags in view must not keep fl-01 'in view'."""
+    from fleet_edge import config
+    from fleet_edge.turn_drive import in_view, tags_at
+    monkeypatch.setattr(config, "FORKLIFT_TAGS", {13: "fl-01", 20: "fl-02"})
+    monkeypatch.setattr(config, "TAG_MOUNTS", {
+        13: dict(height=0.08, fwd=0.0, left=0.0, heading=0.0),
+        20: dict(height=0.08, fwd=0.5, left=0.0, heading=0.0)})
+    assert set(tags_at(0, 0, 0, "fl-01")) == {13} and set(tags_at(0, 0, 0, "fl-02")) == {20}
+    box = [(0.4, -0.1), (0.6, -0.1), (0.6, 0.1), (0.4, 0.1)]    # only x = 0.5 is in view
+    border = {13: box, 20: box}
+    assert not in_view(border, 0, 0, 0, "fl-01")
+    assert in_view(border, 0, 0, 0, "fl-02")

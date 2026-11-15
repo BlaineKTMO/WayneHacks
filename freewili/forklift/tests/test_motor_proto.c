@@ -5,6 +5,7 @@
 #include "../main/motor_proto.h"
 #include "../main/byte_ring.h"
 #include "../main/rf_proto.h"
+#include "../main/rf_sched.h"
 
 static int failures;
 #define CHECK(cond) do { if (!(cond)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -120,6 +121,59 @@ static void test_byte_ring(void) {
     CHECK(byte_ring_push_all(&r, line, sizeof line - 1) && byte_ring_count(&r) == sizeof line - 1);
 }
 
+static void test_rf_addr(void) {
+    uint8_t id = 0, p[RF_PAYLOAD_LEN];
+    CHECK(strcmp(rf_split_addr("2:W,45,38", &id), "W,45,38") == 0 && id == 2);
+    CHECK(strcmp(rf_split_addr("W,45,38", &id), "W,45,38") == 0 && id == RF_DEFAULT_ID);
+    CHECK(strcmp(rf_split_addr("0:W,1,1", &id), "0:W,1,1") == 0 && id == RF_DEFAULT_ID);
+    CHECK(strcmp(rf_split_addr("S,x", &id), "S,x") == 0 && id == 1);
+    rf_pack(p, RF_KIND_TELEM, 2, 0, "T,IDLE,0.00");
+    CHECK(rf_packet_id(p, RF_PAYLOAD_LEN) == 2);
+    CHECK(rf_packet_id(p, RF_PAYLOAD_LEN - 1) == 0);
+    p[0] = 0;
+    CHECK(rf_packet_id(p, RF_PAYLOAD_LEN) == 0);
+}
+
+static void test_rf_sched(void) {
+    rf_sched_t s;
+    rf_out_t o;
+    bool poll = false;
+    rf_sched_init(&s);
+    CHECK(!rf_sched_next(&s, 0, &o, &poll));
+    /* first packet to each forklift is a poll; while awaiting the reply nothing goes */
+    CHECK(rf_sched_push(&s, 1, "W,10,10") && rf_sched_push(&s, 2, "W,20,20"));
+    CHECK(rf_sched_next(&s, 0, &o, &poll) && o.id == 1 && poll);
+    CHECK(!rf_sched_next(&s, 5, &o, &poll));
+    rf_sched_heard(&s, 2);                         /* someone else: still waiting */
+    CHECK(!rf_sched_next(&s, 6, &o, &poll));
+    rf_sched_heard(&s, 1);                         /* the answer: air is free */
+    CHECK(rf_sched_next(&s, 7, &o, &poll) && o.id == 2 && poll);
+    /* no answer at all: the slot times out */
+    CHECK(rf_sched_push(&s, 1, "W,11,11"));
+    CHECK(!rf_sched_next(&s, 7 + RF_SLOT_MS - 1, &o, &poll));
+    CHECK(rf_sched_next(&s, 7 + RF_SLOT_MS, &o, &poll) && o.id == 1 && !poll);   /* polled < 200 ms ago */
+    /* back to back between polls */
+    CHECK(rf_sched_push(&s, 1, "W,12,12") && rf_sched_push(&s, 2, "W,22,22"));
+    CHECK(rf_sched_next(&s, 40, &o, &poll) && !poll);
+    CHECK(rf_sched_next(&s, 40, &o, &poll) && !poll);
+    /* RF_POLL_MS later it polls again */
+    CHECK(rf_sched_push(&s, 1, "W,13,13"));
+    CHECK(rf_sched_next(&s, RF_POLL_MS, &o, &poll) && poll);
+    rf_sched_heard(&s, 1);
+    /* newer W replaces the older one for the same forklift; S is kept */
+    rf_sched_init(&s);
+    CHECK(rf_sched_push(&s, 1, "W,1,1") && rf_sched_push(&s, 1, "S,stop") && rf_sched_push(&s, 1, "W,2,2"));
+    CHECK(s.count == 2 && strcmp(s.q[0].text, "S,stop") == 0 && strcmp(s.q[1].text, "W,2,2") == 0);
+    /* full queue: oldest non-stop makes room; all stops: refused */
+    rf_sched_init(&s);
+    for (unsigned i = 0; i < RF_QUEUE_LEN; i++) CHECK(rf_sched_push(&s, (uint8_t)(1 + i % RF_MAX_ID), "F,10,100"));
+    CHECK(rf_sched_push(&s, 1, "S,x") && s.count == RF_QUEUE_LEN && strcmp(s.q[RF_QUEUE_LEN - 1].text, "S,x") == 0);
+    rf_sched_init(&s);
+    for (unsigned i = 0; i < RF_QUEUE_LEN; i++) CHECK(rf_sched_push(&s, 1, "S,x"));
+    CHECK(!rf_sched_push(&s, 1, "W,1,1"));
+    CHECK(!rf_sched_push(&s, 0, "W,1,1") && !rf_sched_push(&s, RF_MAX_ID + 1, "W,1,1"));
+}
+
 static void test_rf_proto(void) {
     uint8_t p[RF_PAYLOAD_LEN];
     char line[RF_TEXT_MAX + 1];
@@ -155,6 +209,8 @@ static void test_rf_proto(void) {
 
 int main(void) {
     test_rf_proto();
+    test_rf_addr();
+    test_rf_sched();
     test_byte_ring();
     test_parse();
     test_drive_channel();

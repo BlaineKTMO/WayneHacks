@@ -39,7 +39,17 @@ CORNER_TAGS = {
 }
 
 # Tag on each forklift's roof -> forklift ID used everywhere else.
-FORKLIFT_TAGS = {13: "fl-01"}
+FORKLIFT_TAGS = {13: "fl-01", 16: "fl-01"}
+# fl-02 (no fork, Nov 15): tag 8. Its TAG_MOUNTS entry below is a PLACEHOLDER (deck
+# height, over the turning point, "up" = forward) until calibrated with:
+#   uv run python -m fleet_edge.calibrate_forklift fl-02 8
+FORKLIFT_TAGS[8] = "fl-02"
+
+# Things on the floor (Nov 15). Cargo = items a forklift with forks (fl-01) picks up: it
+# drives up facing the item, lowers the forks, creeps in, raises them and carries the item
+# to a dock. Docks = where cargo is delivered; their graph nodes follow these tags.
+CARGO_TAGS = {3: "cargo-3", 10: "cargo-10"}
+DOCK_TAGS = {0: "dock_A", 17: "dock_B"}
 HERO_FORKLIFT = "fl-01"       # the one Ring 1 drives
 # Height of the forklift's tag above the table (metres). Needed because a raised tag looks
 # shifted away from the point under the camera. Tag 13 moved from the fork mast (271 mm)
@@ -60,8 +70,27 @@ TAG_HEADING_OFFSET = -1.5708
 # Deck mount (Nov 15): the reported pose is the chassis's measured TURNING POINT, so spins
 # are in place. Spin tests put it 74-96 mm forward and 59-85 mm left of the tag, i.e. the
 # tag is 85 mm behind and 72 mm right of it.
+# Fork motor added (Nov 15): the turning point moved LEFT. Four ~45 deg left spins turned
+# about (fwd, left) +7/+36, -7/+26, -18/+10, -16/+12 mm of the old point (it wanders with
+# heading; the old point swept 20-29 mm per spin and tripped the drift guard). Shifted by
+# the mean, 21 mm left; SPIN_DRIFT_M widened for the remaining +-2 cm wander.
 TAG_OFFSET_FORWARD_M = -0.085
-TAG_OFFSET_LEFT_M = -0.072
+TAG_OFFSET_LEFT_M = -0.093
+
+# Every tag a forklift carries: tag id -> where it sits on the chassis. height above the
+# table (m); fwd / left = the tag centre relative to the turning point (the reported pose),
+# chassis frame, + forward / + left; heading = added to the tag's own "up" direction to get
+# the forklift's heading. With two tags in view the heading comes from the line between
+# them (wider baseline, steadier); with one, from that tag alone.
+# Measure a new tag with:  uv run python -m fleet_edge.measure_tag <id>   (tag 13 in view)
+TAG_MOUNTS = {
+    13: dict(height=FORKLIFT_TAG_HEIGHT_M, fwd=TAG_OFFSET_FORWARD_M, left=TAG_OFFSET_LEFT_M,
+             heading=TAG_HEADING_OFFSET),
+    # 16: raised at the front of the chassis. measure_tag 16 (Nov 15, fresh table map,
+    # 77 frames, height spread 0.8 mm).
+    16: dict(height=0.198, fwd=0.046, left=-0.002, heading=-1.6250),   # left: -21 mm pivot shift
+    8: dict(height=0.080, fwd=0.0, left=0.0, heading=0.0),   # fl-02 PLACEHOLDER: calibrate_forklift
+}
 
 # ---------------------------------------------------------------- Free-WiLi serial link
 # "auto" finds the Free-WiLi OG main CPU by its USB name. Or set a path by hand
@@ -73,7 +102,11 @@ SERIAL_BAUD = 115200
 COMMAND_RATE_HZ = 20          # how often we send W lines
 
 # bridge.py (Ring 2+): which forklift is wired to which Free-WiLi. Only these are driven.
-FORKLIFT_LINKS = {"fl-01": SERIAL_PORT}
+# "auto" = the forklift's own USB if plugged in, else the radio base; "radio"; or a port/URL.
+FORKLIFT_LINKS = {"fl-01": SERIAL_PORT, "fl-02": os.environ.get("FL02_PORT", "auto")}
+FORKLIFT_RADIO_IDS = {"fl-01": 1, "fl-02": 2}          # firmware RF_FORKLIFT_ID
+FORKLIFT_USB_PRODUCTS = {"fl-01": "FWOG main forklift", "fl-02": "FWOG main fl02"}
+FORKLIFT_HAS_FORK = {"fl-01": True, "fl-02": False}
 # Add the second one when it exists, e.g.  "fl-02": "/dev/tty.usbmodem2101"
 SIM_START = {"fl-01": "dock_A", "fl-02": "dock_B"}   # --sim only: where simulated forklifts begin
 LOST_TAG_STOP_S = 0.3         # tag not seen for this long -> send S (stop). Must stop within 0.5 s.
@@ -99,7 +132,7 @@ TURN_MIN_SPEED = 35           # spin speed when nearly lined up. Spin deadband m
 SLOWDOWN_M = 0.08             # start easing off this far from the waypoint
 NO_REALIGN_M = 0.15           # no re-spins this close to a waypoint (a small sideways miss is fine)
 ARRIVE_SIDE_M = 0.05          # drawn level with the waypoint and this close sideways = reached
-SPIN_DRIFT_M = 0.04           # a spin that moves the turning point this far is stopped and re-planned
+SPIN_DRIFT_M = 0.06      # was 0.04: with the fork motor the turning centre wanders +-2 cm (Nov 15)
 MAX_DRIFTS = 2                # more drift re-plans than this on one leg -> stop for good (DRIFT_STOP)
 # Clockwise spins (right wheels reversing) slide sideways on this chassis instead of turning
 # on the spot (real loops 2-5); anticlockwise ones stay put. Turn left only: a 90 deg right

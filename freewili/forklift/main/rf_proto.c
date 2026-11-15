@@ -35,3 +35,17 @@ bool rf_unpack(const uint8_t *in, size_t n, uint8_t kind, uint8_t id,
     if (seq) *seq = in[3];
     return true;
 }
+
+uint8_t rf_packet_id(const uint8_t *in, size_t n) {
+    if (n != RF_PAYLOAD_LEN || in[0] != RF_MAGIC) return 0;
+    return (in[2] >= 1 && in[2] <= RF_MAX_ID) ? in[2] : 0;
+}
+
+const char *rf_split_addr(const char *line, uint8_t *id) {
+    if (line[0] >= '1' && line[0] <= (char)('0' + RF_MAX_ID) && line[1] == ':') {
+        *id = (uint8_t)(line[0] - '0');
+        return line + 2;
+    }
+    *id = RF_DEFAULT_ID;
+    return line;
+}

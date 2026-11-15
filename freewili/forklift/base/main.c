@@ -3,17 +3,21 @@
  *   laptop --USB lines--> this OG --CC1101 915 MHz--> forklift OG (rf_proto.h packets)
  *          <--T lines---          <--telemetry--
  *
- * To the laptop it looks just like a forklift on USB: send W / F / S lines, get T lines
- * back. Command lines go out over the radio as they arrive; anything else is ignored,
- * exactly as the forklift ignores it. Telemetry from the forklift comes back as its own
- * T line. If nothing has been heard from the forklift for NO_RADIO_MS, this prints
- * "T,NO_RADIO,0.00" once a second instead (and "T,RADIO_FAULT,0.00" if this board's
- * radio won't start).
+ * Several forklifts: a USB line "<id>:<line>" goes to forklift <id> ("2:W,45,38"); with
+ * no prefix it goes to forklift 1, so to a one-forklift laptop this looks exactly like a
+ * forklift on USB. Telemetry comes back as "T,..." from forklift 1 and "<id>:T,..." from
+ * the others. Lines are queued and sent with radio turn-taking (rf_sched.h) so the
+ * forklifts' answers never collide. Anything that isn't a command is ignored, exactly as
+ * the forklift ignores it.
+ *
+ * If a forklift hasn't been heard for NO_RADIO_MS, this prints "T,NO_RADIO,0.00" (with its
+ * prefix) once a second instead: always for forklift 1, for the others only once the
+ * laptop has sent them something. "T,RADIO_FAULT,0.00" if this board's radio won't start.
  *
  * The forklift's 500 ms watchdog still protects everything: if the laptop, this board or
  * the radio link stops, commands stop arriving and the forklift brakes.
  *
- * Screen: "BASE" and the forklift's state as heard over the radio. */
+ * Screen: "BASE" and forklift 1's state as heard over the radio. */
 #include "fwog_main.h"
 #include "hardware/uart.h"
 #include "pico/stdlib.h"
@@ -24,6 +28,7 @@
 #include "../main/motor_proto.h"
 #include "../main/rf_link.h"
 #include "../main/rf_proto.h"
+#include "../main/rf_sched.h"
 
 FWOG_WATCHDOG_DEFAULT();
 
@@ -60,6 +65,12 @@ static void usb_line(const char *s) {
     fflush(stdout);
 }
 
+/* Telemetry line for the laptop: forklift 1 unprefixed, others "<id>:". */
+static void usb_line_from(uint8_t id, const char *s) {
+    if (id != RF_DEFAULT_ID) printf("%u:", (unsigned)id);
+    usb_line(s);
+}
+
 int main(void) {
     board_init();
     const fwog_display_result_t d = fwog_display_update_run();
@@ -81,15 +92,20 @@ int main(void) {
 
     line_rx_t rx;
     line_rx_init(&rx);
+    static rf_sched_t sched;          /* static: ~300 bytes, keep it off the stack */
+    rf_sched_init(&sched);
     uint8_t seq = 0;
-    absolute_time_t last_heard = nil_time;
+    absolute_time_t last_heard[RF_MAX_ID + 1];
+    bool addressed[RF_MAX_ID + 1] = {false};
+    for (unsigned i = 0; i <= RF_MAX_ID; i++) last_heard[i] = nil_time;
+    addressed[RF_DEFAULT_ID] = true;  /* forklift 1 is always reported, as before */
     absolute_time_t next_status = make_timeout_time_ms(STATUS_MS);
     absolute_time_t next_rf_retry = make_timeout_time_ms(RF_RETRY_MS);
 
     while (true) {
         board_watchdog_kick();
 
-        /* Laptop -> radio: command lines only, one packet each. */
+        /* Laptop -> queue: command lines only. */
         int ch;
         while ((ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
             if (!line_rx_feed(&rx, (char)ch)) continue;
@@ -104,23 +120,35 @@ int main(void) {
                 fflush(stdout);
                 continue;
             }
-            if (proto_parse_line(rx.buf).kind == CMD_NONE) continue;
+            uint8_t id;
+            const char *cmd = rf_split_addr(rx.buf, &id);
+            if (proto_parse_line(cmd).kind == CMD_NONE) continue;
+            if (rf_sched_push(&sched, id, cmd)) addressed[id] = true;
+        }
+
+        /* Queue -> radio, taking turns (rf_sched.h). */
+        rf_out_t out;
+        bool poll = false;
+        if (rf_link_ok() && rf_sched_next(&sched, to_ms_since_boot(get_absolute_time()), &out, &poll)) {
             uint8_t pkt[RF_PAYLOAD_LEN];
-            if (rf_pack(pkt, RF_KIND_CMD, RF_FORKLIFT_ID, seq++, rx.buf))
+            if (rf_pack(pkt, poll ? RF_KIND_POLL : RF_KIND_CMD, out.id, seq++, out.text))
                 (void)rf_link_send(pkt, RF_PAYLOAD_LEN);
         }
 
-        /* Radio -> laptop: the forklift's telemetry, verbatim. */
+        /* Radio -> laptop: telemetry, tagged with the forklift it came from. */
         uint8_t pkt[RF_PAYLOAD_LEN];
         char line[RF_TEXT_MAX + 1];
         int16_t rssi = 0;
-        if (rf_link_poll(pkt, sizeof pkt, &rssi) == (int)RF_PAYLOAD_LEN &&
-            rf_unpack(pkt, RF_PAYLOAD_LEN, RF_KIND_TELEM, RF_FORKLIFT_ID, line, NULL) &&
-            line[0] == 'T' && line[1] == ',') {
-            usb_line(line);
-            last_heard = get_absolute_time();
-            show(state_index_of(line));
-            DIAG("[base] heard forklift, RSSI %d dBm\n", (int)rssi);
+        if (rf_link_poll(pkt, sizeof pkt, &rssi) == (int)RF_PAYLOAD_LEN) {
+            const uint8_t id = rf_packet_id(pkt, RF_PAYLOAD_LEN);
+            if (id && rf_unpack(pkt, RF_PAYLOAD_LEN, RF_KIND_TELEM, id, line, NULL) &&
+                line[0] == 'T' && line[1] == ',') {
+                rf_sched_heard(&sched, id);
+                usb_line_from(id, line);
+                last_heard[id] = get_absolute_time();
+                if (id == RF_DEFAULT_ID) show(state_index_of(line));
+                DIAG("[base] heard forklift %u, RSSI %d dBm\n", (unsigned)id, (int)rssi);
+            }
         }
 
         if (!rf_link_ok() && time_reached(next_rf_retry)) {
@@ -133,13 +161,17 @@ int main(void) {
             if (!rf_link_ok()) {
                 usb_line("T,RADIO_FAULT,0.00");
                 show(DISPLAY_RADIO_FAULT);
-            } else if (is_nil_time(last_heard) ||
-                       absolute_time_diff_us(last_heard, get_absolute_time()) >
-                           (int64_t)NO_RADIO_MS * 1000) {
-                usb_line("T,NO_RADIO,0.00");
-                show(DISPLAY_NO_RADIO);
-            } else if (s_shown != 0xFFu) {
-                show(s_shown);   /* repaint a display that rebooted */
+            } else {
+                for (uint8_t id = 1; id <= RF_MAX_ID; id++) {
+                    if (!addressed[id]) continue;
+                    if (is_nil_time(last_heard[id]) ||
+                        absolute_time_diff_us(last_heard[id], get_absolute_time()) >
+                            (int64_t)NO_RADIO_MS * 1000) {
+                        usb_line_from(id, "T,NO_RADIO,0.00");
+                        if (id == RF_DEFAULT_ID) show(DISPLAY_NO_RADIO);
+                    }
+                }
+                if (s_shown != 0xFFu) show(s_shown);   /* repaint a display that rebooted */
             }
         }
         tight_loop_contents();

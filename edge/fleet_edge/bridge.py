@@ -2,6 +2,10 @@
 
   uv run python -m fleet_edge.bridge                 # camera + Free-WiLi + device certificate
   uv run python -m fleet_edge.bridge --sim --iam     # no hardware, your `aws login` (for testing)
+  uv run python -m fleet_edge.bridge --view          # + a window: camera, graph, route, events
+  uv run python -m fleet_edge.bridge --local-goto dock_A --view
+        # no cloud at all: plan the route here with the same A* and graph the cloud planner
+        # uses, and drive it with the same Unit. For trying the hardware before the cloud.
 
 What it does, every 50 ms:
   1. Where is each forklift?  Camera + AprilTags (or --sim: simulated motion).
@@ -36,7 +40,7 @@ from fleet_shared.messages import Event, Path as PathMsg, Pose, Stop, Telemetry
 from fleet_shared.safety import Guard, Hazards
 
 from . import config
-from .freewili_link import SerialLink, SimLink
+from .freewili_link import SimLink, open_link
 from .pure_pursuit import WaypointFollower
 
 CERTS = Path(__file__).resolve().parents[1] / "certs"
@@ -151,7 +155,7 @@ class Unit:
                     self.last_blocked = now
                     self._event("blocked")
                 else:
-                    if self.path.action:
+                    if self.path.action and config.FORKLIFT_HAS_FORK.get(self.fid, True):
                         time.sleep(0.5)  # TODO(forks): send the fork servo command here
                     self._event("done")
                     print(f"[{self.fid}] done at {self.node}")
@@ -167,6 +171,67 @@ class Unit:
         motor = 0.02 * (abs(getattr(self.link, "left", 0)) + abs(getattr(self.link, "right", 0)))
         self.publish(topics.telemetry(self.fid), Telemetry(
             battery_v=t.battery_v if t else 0.0, motor_a=round(motor, 2), state=self.state, node=self.node))
+
+
+class BridgeView:
+    """--view: the camera with the warehouse graph, the active route, the forklift and the
+    events it has sent. q in the window quits."""
+
+    def __init__(self, localizer, graph: Graph, video_path: str | None):
+        from .drive_cam import Projector
+        from .turn_drive import border_from_camera
+        self.w2p, self.graph, self.video_path, self.video = Projector(localizer), graph, video_path, None
+        self.border = border_from_camera(localizer, config.CAMERA_WIDTH, config.CAMERA_HEIGHT)
+
+    def show(self, frame, sightings, pose, unit: "Unit", log: list[str], target=None, local=False) -> bool:
+        import cv2
+        import numpy as np
+        from .drive_cam import WHITE, GREEN, YELLOW, ORANGE, RED, draw_panel, draw_scene
+
+        img = frame.copy()
+        w2p = self.w2p
+        if w2p.loc.H is not None:
+            g = self.graph
+            for a_id, nbrs in g.adj.items():                       # graph edges
+                for b_id in nbrs:
+                    a, b = g.nodes[a_id], g.nodes[b_id if isinstance(b_id, str) else b_id[0]]
+                    cv2.line(img, w2p(a.x, a.y), w2p(b.x, b.y), (110, 110, 110), 1, cv2.LINE_AA)
+            if unit.path:                                           # active route
+                pts = [w2p(n["x"], n["y"]) for n in unit.path.nodes]
+                if unit.pose:
+                    pts = [w2p(unit.pose[0], unit.pose[1])] + pts
+                cv2.polylines(img, [np.array(pts)], False, YELLOW, 3, cv2.LINE_AA)
+            for nid, nd in g.nodes.items():                        # nodes
+                p = w2p(nd.x, nd.y)
+                hot = nid == target
+                cv2.circle(img, p, 9 if hot else 5, RED if hot else WHITE, 2 if hot else -1)
+                cv2.putText(img, nid, (p[0] + 8, p[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            RED if hot else WHITE, 1, cv2.LINE_AA)
+        tag_ok = unit.state != "STOPPED" or unit.follower is None
+        draw_scene(img, sightings or [], pose, w2p, self.border, tag_ok, ring1_route=False)
+        rows = [(f"{'LOCAL (no cloud)' if local else 'cloud'}   {unit.fid}: {unit.state}"
+                 f"   node {unit.node or '?'}" + (f"   goto {target}" if target else ""),
+                 GREEN if unit.state == "DRIVING" else WHITE)]
+        if unit.path:
+            rows.append(("route: " + " > ".join(n["id"] for n in unit.path.nodes), YELLOW))
+        rows += [(f"event: {e}", ORANGE) for e in log[-4:]]
+        rows.append(("q quits (the forklift stops)", (180, 180, 180)))
+        draw_panel(img, rows, "")
+        cv2.imshow("Forklift bridge", img)
+        if self.video_path:
+            if self.video is None:
+                Path(self.video_path).parent.mkdir(parents=True, exist_ok=True)
+                self.video = cv2.VideoWriter(self.video_path, cv2.VideoWriter_fourcc(*"mp4v"), 20,
+                                             (img.shape[1], img.shape[0]))
+            self.video.write(img)
+        return (cv2.waitKey(1) & 0xFF) != ord("q")
+
+    def close(self):
+        import cv2
+        if self.video is not None:
+            self.video.release()
+            print(f"saved video {self.video_path}")
+        cv2.destroyAllWindows()
 
 
 def connect(use_iam: bool, region: str = "us-east-2") -> mqtt.Connection:
@@ -202,22 +267,45 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sim", action="store_true", help="no camera / Free-WiLi: simulated motion")
     ap.add_argument("--iam", action="store_true", help="connect with your aws login instead of the device cert")
+    ap.add_argument("--view", action="store_true", help="show the camera with the graph, route and events")
+    ap.add_argument("--video", help="with --view: also record the window to this .mp4")
+    ap.add_argument("--local-goto", metavar="NODE",
+                    help="no cloud: plan a route to NODE here (same A* + graph) and drive it, then exit")
+    ap.add_argument("--forklift", default=config.HERO_FORKLIFT,
+                    help="with --local-goto: which forklift drives (default %(default)s)")
+    ap.add_argument("--max-seconds", type=float, default=60.0,
+                    help="with --local-goto: stop the forklift and exit after this long (default 60)")
+    ap.add_argument("--log", help="with --local-goto: per-frame CSV (t, pose, tags seen, mode, wheels)")
     a = ap.parse_args()
 
     graph = Graph.load()
-    if not a.iam and not (CERTS / "device.pem.crt").exists():
-        raise SystemExit("No device certificate. Run: uv run python cloud/scripts/create_edge_cert.py  (or use --iam)")
-    conn = connect(a.iam)
     lock = threading.Lock()
-
-    def publish(topic, msg):
-        with lock:
-            conn.publish(topic=topic, payload=msg.to_json(), qos=mqtt.QoS.AT_MOST_ONCE)
-
     hazards = Hazards()
-    fut, _ = conn.subscribe(topic=topics.DETECTIONS, qos=mqtt.QoS.AT_LEAST_ONCE,
-                            callback=lambda topic, payload, **_: hazards.on_detections(json.loads(payload)))
-    fut.result(timeout=10)
+    log: list[str] = []          # recent published events, for the view
+    conn = None
+    if a.local_goto:
+        if a.local_goto not in graph.nodes:
+            raise SystemExit(f"unknown node {a.local_goto}; nodes: {', '.join(graph.nodes)}")
+
+        def publish(topic, msg):
+            if topic.endswith("/event"):
+                log.append(f"{msg.type} {msg.node or ''}".strip())
+                print(f"  event: {msg.to_json()}")
+    else:
+        if not a.iam and not (CERTS / "device.pem.crt").exists():
+            raise SystemExit("No device certificate. Run: uv run python cloud/scripts/create_edge_cert.py"
+                             "  (or use --iam, or --local-goto NODE to try without the cloud)")
+        conn = connect(a.iam)
+
+        def publish(topic, msg):
+            if topic.endswith("/event"):
+                log.append(f"{msg.type} {msg.node or ''}".strip())
+            with lock:
+                conn.publish(topic=topic, payload=msg.to_json(), qos=mqtt.QoS.AT_MOST_ONCE)
+
+        fut, _ = conn.subscribe(topic=topics.DETECTIONS, qos=mqtt.QoS.AT_LEAST_ONCE,
+                                callback=lambda topic, payload, **_: hazards.on_detections(json.loads(payload)))
+        fut.result(timeout=10)
     camera = detector = localizer = None
     factory = None
     if not a.sim:
@@ -226,7 +314,7 @@ def main():
         camera, detector = Camera(), TagDetector()
         localizer = Localizer(camera.K)   # K: needed for the raised tag's height correction
         border = border_from_camera(localizer, config.CAMERA_WIDTH, config.CAMERA_HEIGHT)
-        factory = lambda wps: TurnDriveFollower(wps, loop=False, border=border)  # noqa: E731
+        factory = lambda fid: (lambda wps: TurnDriveFollower(wps, loop=False, border=border, fid=fid))  # noqa: E731
 
     units: dict[str, Unit] = {}
     fids = config.SIM_START if a.sim else config.FORKLIFT_LINKS
@@ -235,23 +323,61 @@ def main():
             start = graph.nodes[config.SIM_START.get(fid, "dock_A")]
             link = SimLink(x=start.x, y=start.y, theta=0.0)
         else:
-            link = SerialLink(config.FORKLIFT_LINKS[fid])
-        units[fid] = Unit(fid, link, graph, publish, hazards, follower_factory=factory)
+            try:
+                link = open_link(fid)
+            except Exception as e:   # not plugged in / no radio base: run without it
+                print(f"[{fid}] no link ({e}); skipping it")
+                continue
+        units[fid] = Unit(fid, link, graph, publish, hazards,
+                          follower_factory=factory(fid) if factory else None)
+    if not units:
+        raise SystemExit("no forklift reachable")
         for kind, topic in (("path", topics.path(fid)), ("stop", topics.stop(fid))):
+            if conn is None:
+                break
             fut, _ = conn.subscribe(topic=topic, qos=mqtt.QoS.AT_LEAST_ONCE,
                                     callback=lambda topic, payload, u=units[fid], k=kind, **_: u.on_message(k, payload))
             fut.result(timeout=10)
-    print(f"bridge up: {', '.join(units)} ({'sim' if a.sim else 'camera + Free-WiLi'})")
+    print(f"bridge up: {', '.join(units)} ({'sim' if a.sim else 'camera + Free-WiLi'})"
+          f"{'  [LOCAL: no cloud]' if a.local_goto else ''}")
+
+    view = BridgeView(localizer, graph, a.video) if a.view and not a.sim else None
+    if a.local_goto and a.forklift not in units:
+        raise SystemExit(f"--forklift {a.forklift}: not connected (have {', '.join(units)})")
+    goto_unit = units[a.forklift] if a.local_goto else None
+    goto_sent, goto_until = False, None
+    t_start = time.monotonic()
+    csv = None
+    if a.local_goto and a.log:
+        Path(a.log).parent.mkdir(parents=True, exist_ok=True)
+        csv = open(a.log, "w")
+        csv.write("t,x_mm,y_mm,heading_deg,tags,state,mode,target,left,right\n")
 
     n = 0
     try:
         while True:
             t0 = time.monotonic()
+            frame = sightings = None
+            poses = {}
             if a.sim:
                 seen = {fid: (u.link.x, u.link.y, u.link.theta) for fid, u in units.items()}
             else:
-                poses = localizer.process(detector.detect(camera.read()))
+                frame = camera.read()
+                sightings = detector.detect(frame)
+                poses = localizer.process(sightings)
                 seen = {fid: (p.x, p.y, p.theta) for fid, p in poses.items()}
+
+            # --local-goto: once the camera has placed the forklift on the graph, plan the
+            # route here exactly as the RoutePlanner Lambda does (A* from its node).
+            if goto_unit and not goto_sent and goto_unit.node is not None:
+                route = graph.astar(goto_unit.node, a.local_goto) or [a.local_goto]
+                if route[0] != goto_unit.node:
+                    route = [goto_unit.node] + route
+                msg = PathMsg(task_id=f"local-{uuid.uuid4().hex[:6]}", nodes=graph.to_path_nodes(route))
+                print(f"[local] goto {a.local_goto}: A* route {route}")
+                log.append(f"route {' > '.join(route)}")
+                goto_unit.on_message("path", msg.to_json().encode())
+                goto_sent = True
             for fid, u in units.items():
                 u.tick(t0, seen.get(fid))
                 if n % 2 == 0 and fid in seen:
@@ -259,16 +385,47 @@ def main():
                     publish(topics.pose(fid), Pose(x=round(x, 4), y=round(y, 4), theta=round(math.remainder(th, math.tau), 4)))
                 if n % config.COMMAND_RATE_HZ == 0:
                     u.telemetry()
+            if csv is not None and goto_unit is not None:
+                p, f = seen.get(goto_unit.fid), goto_unit.follower
+                tags = "+".join(str(t.tag_id) for t in (sightings or []) if t.tag_id in config.FORKLIFT_TAGS)
+                w = getattr(goto_unit.link, "last_wheels", ("", ""))
+                csv.write(f"{t0 - t_start:.2f},{p[0]*1000:.1f},{p[1]*1000:.1f},{math.degrees(p[2]):.1f}," if p else f"{t0 - t_start:.2f},,,,")
+                csv.write(f"{tags},{goto_unit.state},{getattr(f, 'mode', '')},"
+                          f"{'%.0f/%.0f' % tuple(v * 1000 for v in f.target) if f else ''},{w[0]},{w[1]}\n")
+            if goto_unit and t0 - t_start > a.max_seconds:
+                for u in units.values():
+                    u.link.stop("max_seconds")
+                print(f"[local] gave up after {a.max_seconds:.0f} s: state {goto_unit.state}, at {goto_unit.node}")
+                break
+            if view is not None and frame is not None:
+                fid0 = goto_unit.fid if goto_unit else next(iter(units))
+                if not view.show(frame, sightings, poses.get(fid0), units[fid0], log,
+                                 target=a.local_goto, local=bool(a.local_goto)):
+                    break
+            if goto_unit and goto_sent and goto_unit.follower is None and goto_unit.inbox.empty():
+                goto_until = goto_until or (t0 + 2.0)        # finished (done or fault): linger 2 s
+                if t0 > goto_until:
+                    print(f"[local] finished: state {goto_unit.state}, at {goto_unit.node}")
+                    break
             n += 1
             time.sleep(max(0.0, TICK_S - (time.monotonic() - t0)))
     except KeyboardInterrupt:
         pass
     finally:
+        if csv is not None:
+            csv.close()
         for u in units.values():
+            u.link.stop("exit")
             u.link.close()
         if camera:
             camera.close()
-        conn.disconnect().result(timeout=5)
+        if view is not None:
+            view.close()
+        if conn is not None:
+            conn.disconnect().result(timeout=5)
+        if not a.sim:
+            import os
+            os._exit(0)   # pupil_apriltags can segfault while the interpreter shuts down
 
 
 if __name__ == "__main__":

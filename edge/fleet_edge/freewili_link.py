@@ -5,9 +5,14 @@
   laptop -> Free-WiLi   S,<reason>\\n           stop everything now
   Free-WiLi -> laptop   T,<state>,<battery_v>\\n telemetry at 1 Hz
 
-Two implementations with the same methods:
-  SerialLink - the real Free-WiLi
+Implementations with the same methods (wheels, fork, stop, poll, close):
+  SerialLink - one Free-WiLi on its own port (USB, or WiFi via socket://)
+  RadioLink  - one forklift through the shared radio base station (RadioHub): lines go
+               out as "<id>:W,..." and its telemetry comes back as "<id>:T,..." (forklift
+               1 may also answer as plain "T,...")
   SimLink    - a pretend forklift that moves on screen (for --sim and tests)
+
+open_link(fid) picks the right one from config.FORKLIFT_LINKS.
 """
 
 from __future__ import annotations
@@ -55,6 +60,13 @@ def parse_line(line: str) -> FreeWiliTelemetry | None:
     return None
 
 
+def split_addr(line: str) -> tuple[int, str]:
+    """"2:T,IDLE,0.00" -> (2, "T,IDLE,0.00"); no prefix -> forklift 1 (base protocol)."""
+    if len(line) > 2 and line[0] in "123456789" and line[1] == ":":
+        return int(line[0]), line[2:]
+    return 1, line
+
+
 MAIN_CPU_PRODUCT = "FWOG main forklift"   # USB product string set by freewili/forklift firmware
 RADIO_BASE_PRODUCT = "FWOG main flbase"    # the radio base station OG (same lines, over 915 MHz)
 
@@ -86,6 +98,7 @@ class SerialLink:
         self.last_telemetry: FreeWiliTelemetry | None = None
 
     def wheels(self, left: float, right: float) -> None:
+        self.last_wheels = (round(left), round(right))
         self.ser.write(format_wheels(left, right).encode())
 
     def fork(self, speed: float, ms: int) -> None:
@@ -108,6 +121,88 @@ class SerialLink:
     def close(self) -> None:
         self.stop("shutdown")
         self.ser.close()
+
+
+class RadioHub:
+    """The radio base station's one serial port, shared by every forklift it reaches."""
+
+    _hubs: dict[str, "RadioHub"] = {}
+
+    @classmethod
+    def on(cls, port: str, baud: int = config.SERIAL_BAUD) -> "RadioHub":
+        if port not in cls._hubs:
+            cls._hubs[port] = cls(port, baud)
+        return cls._hubs[port]
+
+    def __init__(self, port: str, baud: int = config.SERIAL_BAUD):
+        import serial  # pyserial
+        self.port = port
+        self.ser = serial.serial_for_url(port, baudrate=baud, timeout=0)
+        self._buf = b""
+        self.latest: dict[int, FreeWiliTelemetry] = {}
+        self.users = 0
+
+    def send(self, radio_id: int, line: str) -> None:
+        self.ser.write(f"{radio_id}:{line}".encode())
+
+    def pump(self) -> None:
+        self._buf += self.ser.read(4096)
+        *lines, self._buf = self._buf.split(b"\n")
+        for raw in lines:
+            rid, text = split_addr(raw.decode(errors="replace").strip())
+            t = parse_line(text)
+            if t:
+                self.latest[rid] = t
+
+    def release(self) -> None:
+        self.users -= 1
+        if self.users <= 0:
+            self.ser.close()
+            RadioHub._hubs.pop(self.port, None)
+
+
+class RadioLink:
+    """One forklift through the radio base station."""
+
+    def __init__(self, hub: RadioHub, radio_id: int):
+        self.hub, self.radio_id = hub, radio_id
+        hub.users += 1
+        self.last_telemetry: FreeWiliTelemetry | None = None
+
+    def wheels(self, left: float, right: float) -> None:
+        self.last_wheels = (round(left), round(right))
+        self.hub.send(self.radio_id, format_wheels(left, right))
+
+    def fork(self, speed: float, ms: int) -> None:
+        self.hub.send(self.radio_id, format_fork(speed, ms))
+
+    def stop(self, reason: str) -> None:
+        self.hub.send(self.radio_id, format_stop(reason))
+
+    def poll(self) -> FreeWiliTelemetry | None:
+        self.hub.pump()
+        self.last_telemetry = self.hub.latest.get(self.radio_id, self.last_telemetry)
+        return self.last_telemetry
+
+    def close(self) -> None:
+        self.stop("shutdown")
+        self.hub.release()
+
+
+def open_link(fid: str):
+    """The link for forklift `fid`, from config.FORKLIFT_LINKS[fid]:
+      "auto"   its own USB if plugged in (config.FORKLIFT_USB_PRODUCTS), else the radio base
+      "radio"  always through the radio base station (radio id config.FORKLIFT_RADIO_IDS)
+      other    an explicit port or URL (/dev/ttyACM0, socket://forklift-01.local:5000)"""
+    spec = config.FORKLIFT_LINKS.get(fid, "auto")
+    if spec not in ("auto", "radio"):
+        return SerialLink(spec)
+    if spec == "auto":
+        try:
+            return SerialLink(find_port((config.FORKLIFT_USB_PRODUCTS[fid],)))
+        except (RuntimeError, KeyError):
+            pass
+    return RadioLink(RadioHub.on(find_port((RADIO_BASE_PRODUCT,))), config.FORKLIFT_RADIO_IDS[fid])
 
 
 class SimLink:

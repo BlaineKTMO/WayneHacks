@@ -153,6 +153,38 @@ The base screen then shows the forklift's state (`IDLE`, `DRIVING`, …), and th
 
 **Diagnostics:** send `?` on either board's USB port to get a radio report line (`R,cs=1,peak_rssi=...,tx=...,rx=...,rxbad=...` plus key registers). `?0` / `?1` switch that board to radio CS0 / CS1 until it reboots. Laptop tools ignore `R` lines.
 
+## Second forklift: fl-02 (no fork)
+
+fl-02 is wired exactly like fl-01 (section 1) **without driver 3**: headers 1 and 3 stay unconnected, and the firmware never touches them. It has its own build, `fl02`: radio ID 2, screen `FL-02`, USB name `FWOG main fl02`. `F` lines are accepted, so they still feed the watchdog, but do nothing.
+
+**One base station drives both forklifts.** The laptop prefixes each line with the forklift's radio ID, e.g. `2:W,45,38`; a line with no prefix goes to forklift 1. Telemetry comes back the same way: `T,...` from fl-01 and `2:T,...` from fl-02. The base takes turns on the air. Roughly every 200 ms it **polls** each forklift (a command that also says "answer now"). A forklift sends telemetry only when polled, and the base sends nothing else until that answer arrives or 25 ms pass. The two forklifts therefore never transmit over each other.
+
+**Flash the three boards one at a time.** Plug in only one OG for each flash, because `fw flash` takes the first OG it finds:
+
+```bash
+uv run python freewili/wiliOGbsp/tools/fw.py flash fl02 --uf2 freewili/forklift/build/fl02_main.uf2        # new forklift
+uv run python freewili/wiliOGbsp/tools/fw.py flash forklift --uf2 freewili/forklift/build/forklift_main.uf2 # fl-01: the polling change
+uv run python freewili/wiliOGbsp/tools/fw.py flash flbase --uf2 freewili/forklift/build/flbase_main.uf2     # base: multi-forklift
+```
+
+All three must run this firmware together. An old base never polls, so new forklifts would only answer when the air goes quiet. An old forklift ignores polls.
+
+**Portrait screens.** Both forklifts' screens are mounted on their side, so their display apps draw rotated text (`display/vtext.c`). If the text reads upside down, rebuild with `-DFORKLIFT_SCREEN_ROTATION=90` (the default is 270, checked on fl-01; 0 = landscape). The base station's screen stays landscape.
+
+**Laptop side** (`edge/fleet_edge/config.py`):
+- `FORKLIFT_LINKS["fl-02"] = "auto"`: the forklift's own USB if plugged in, otherwise the radio base.
+- `FORKLIFT_RADIO_IDS` and `FORKLIFT_HAS_FORK` hold each forklift's radio ID and whether it has a fork.
+
+To add fl-02's two AprilTags, run:
+
+```bash
+uv run python -m fleet_edge.calibrate_forklift fl-02 <tagA> <tagB>
+```
+
+It measures both tags from scratch: heights, heading, and the turning point. The forklift drives about 8 cm forward and makes two ~45° left spins. It then prints the `FORKLIFT_TAGS` / `TAG_MOUNTS` lines to paste into `config.py`.
+
+To drive fl-02 by hand: `uv run python -m fleet_edge.drive_cam --forklift fl-02`.
+
 ## Serial protocol
 
 Text lines over USB, newline-terminated. The baud rate is ignored, except that **1200 baud reboots the main CPU into BOOTSEL**, so never open the port at 1200.

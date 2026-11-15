@@ -8,6 +8,7 @@
  * Red held 6 s powers the board off (BSP default power policy).
  */
 #include "fwog_display.h"
+#include "vtext.h"
 #include "pico/stdlib.h"
 
 #include <stdio.h>
@@ -19,8 +20,15 @@ FWOG_POWER_DEFAULT();
  * everywhere else (MQTT, DynamoDB, dashboard) stays "fl-01". */
 #ifdef BASE_STATION
 #define FORKLIFT_ID "BASE"          /* radio base station: shows the forklift's state */
+#elif defined(FORKLIFT_NAME)
+#define FORKLIFT_ID FORKLIFT_NAME   /* "FL-02" etc., from CMakeLists.txt */
 #else
 #define FORKLIFT_ID "FL-01"
+#endif
+/* 0 = landscape; 90 / 270 = the screen is mounted on its side (both forklifts, Nov 15).
+   Set per target in CMakeLists.txt (FORKLIFT_SCREEN_ROTATION). */
+#ifndef SCREEN_ROTATION
+#define SCREEN_ROTATION 0
 #endif
 #define MSG_FORKLIFT_STATUS 0x40u   /* keep in step with forklift/main/main.c */
 #define MSG_FORKLIFT_IP 0x41u       /* [0x41, ascii IP]: the WiFi module's address */
@@ -48,16 +56,41 @@ static uint16_t state_colour(int s) {
 
 /* lcd_text draws NOTHING above scale 3 (LCD_MAX_SCALE in the BSP's lcd_text.c),
  * silently. At scale 3 a glyph is 18x24 px on the 320x240 panel. */
-#define TEXT_SCALE 3u
-#define TEXT_X 16u
+#if SCREEN_ROTATION == 0
+/* Landscape 320 x 240. */
+#define ID_X 16u
 #define ID_Y 70u
+#define ID_SCALE 3u
+#define ID_COLS 9u
+#define TEXT_X 16u
+#define TEXT_SCALE 3u
 #define STATE_Y 140u
 #define IP_Y 200u
+#define IP_X 16u
+#define IP_COLS IP_MAX
+#else
+/* Portrait 240 wide x 320 tall (vtext draws past lcd_text's scale-3 limit). */
+#define ID_SCALE 5u                 /* 30 px glyphs: "FL-02" is 150 px */
+#define ID_COLS 5u
+#define ID_X ((240u - ID_COLS * 6u * ID_SCALE) / 2u)
+#define ID_Y 50u
+#define TEXT_SCALE 4u               /* 24 px glyphs: "NO RADIO" is 192 px */
+#define TEXT_X 12u
+#define STATE_Y 140u
+#define IP_X 12u
+#define IP_Y 250u
+#define IP_COLS 18u                 /* 12 px each: 216 px */
+#endif
 #define IP_SCALE 2u                 /* 12 x 16 px glyphs: "192.168.100.100" fits */
+
+static void draw_text(unsigned x, unsigned y, const char *s, unsigned cols, unsigned scale,
+                      uint16_t fg) {
+    vtext_draw(x, y, s, cols, scale, SCREEN_ROTATION, fg, 0x0000u);
+}
 
 static void draw_state(const char *text, uint16_t colour) {
     if (!s_lcd_ready) return;
-    lcd_text_draw_padded(TEXT_X, STATE_Y, text, 9u, TEXT_SCALE, colour, 0x0000u);
+    draw_text(TEXT_X, STATE_Y, text, 9u, TEXT_SCALE, colour);
 }
 
 int main(void) {
@@ -92,7 +125,7 @@ int main(void) {
         st7789_clear(0x0000u);
         st7789_dma_wait();
         board_backlight(255);
-        lcd_text_draw_padded(TEXT_X, ID_Y, FORKLIFT_ID, 9u, TEXT_SCALE, 0xFFFFu, 0x0000u);
+        draw_text(ID_X, ID_Y, FORKLIFT_ID, ID_COLS, ID_SCALE, 0xFFFFu);
         draw_state(link_up ? "WAITING" : "NO LINK", state_colour(link_up ? 0 : 4));
     }
 
@@ -116,8 +149,7 @@ int main(void) {
                 ip[n] = '\0';
                 if (strcmp(ip, ip_shown) != 0) {
                     strcpy(ip_shown, ip);
-                    lcd_text_draw_padded(TEXT_X, IP_Y, ip, IP_MAX, IP_SCALE,
-                                         st7789_rgb565(0, 200, 255), 0x0000u);
+                    draw_text(IP_X, IP_Y, ip, IP_COLS, IP_SCALE, st7789_rgb565(0, 200, 255));
                 }
                 continue;
             }

@@ -9,16 +9,16 @@ pole beside it than pure pursuit's arcs.
 When the next waypoint is behind the forklift (and ALLOW_REVERSE is on), it backs up
 to it instead of turning round, so a two-point route shuttles with almost no turning.
 
-Border (optional): a convex polygon, in world metres at the forklift tag's height, that
-the tag must stay inside, normally the camera's view shrunk by a margin (see
-border_from_camera). Before every move the follower predicts where the tag will go:
+Border (optional): the camera's view shrunk by a margin, as a world polygon for each
+forklift tag at that tag's height (see border_from_camera). The forklift may be
+anywhere as long as AT LEAST ONE of its tags (TAG_MOUNTS) is inside its polygon.
+Before every move the follower predicts where the tags will go:
   * a spin swings the chassis about its measured pivot (PIVOT_FWD_M ahead of centre),
-    so the tag is checked every few degrees along the arc;
-  * a straight leg moves it in a line, so checking the end is enough (the border is
-    convex and the start is inside).
+    so the tags are checked every few degrees along the arc;
+  * a straight leg is checked every LEG_CHECK_STEP_M.
 It tries face-forward / face-backward and short-way / long-way spins, least turning
-first, and takes the first whose whole move keeps the tag inside. If none does, it
-doesn't move and reports mode "blocked". If the tag is ever found outside the border
+first, and takes the first whose whole move keeps a tag in view. If none does, it
+doesn't move and reports mode "blocked". If every tag is ever found outside the border
 (drift), it stops ("border").
 
 Steering point: the chassis turns about a point PIVOT_FWD_M ahead of its centre (it is
@@ -38,6 +38,7 @@ import math
 from . import config
 
 SPIN_CHECK_STEP = math.radians(5)
+LEG_CHECK_STEP_M = 0.02
 
 
 def wrap(a: float) -> float:
@@ -53,6 +54,26 @@ def body_to_world(x, y, theta, fwd, left):
 def tag_at(x, y, theta):
     """World position of the forklift tag for a chassis pose."""
     return body_to_world(x, y, theta, config.TAG_OFFSET_FORWARD_M, config.TAG_OFFSET_LEFT_M)
+
+
+def tags_at(x, y, theta, fid=None):
+    """World position of each of forklift `fid`'s tags (default the hero) for a chassis
+    pose: {tag: (x, y)}."""
+    fid = fid or config.HERO_FORKLIFT
+    return {t: body_to_world(x, y, theta, m["fwd"], m["left"]) for t, m in config.TAG_MOUNTS.items()
+            if config.FORKLIFT_TAGS.get(t) == fid}
+
+
+def in_view(border, x, y, theta, fid=None) -> bool:
+    """Would the camera still see forklift `fid` at this pose? True if ANY of its tags is
+    inside its border. `border` is {tag: polygon} (border_from_camera), a single polygon
+    (tag 13 only, older callers/tests), or None (no limit)."""
+    if border is None:
+        return True
+    if isinstance(border, dict):
+        pts = tags_at(x, y, theta, fid)
+        return any(inside(poly, pts[t]) for t, poly in border.items() if t in pts)
+    return inside(border, tag_at(x, y, theta))
 
 
 def spin_pose(x, y, theta, delta):
@@ -80,23 +101,25 @@ def inside(poly, p) -> bool:
 
 
 def border_from_camera(localizer, width, height, margin_px=None):
-    """The camera frame inset by margin_px, as a world polygon at the tag's height.
-    None if the localizer has no table map yet."""
+    """The camera frame inset by margin_px, as a world polygon for each forklift tag
+    (each at its own height): {tag: polygon}. None if the localizer has no table map yet."""
     if localizer.H is None:
         return None
     m = config.TAG_BORDER_MARGIN_PX if margin_px is None else margin_px
     corners = [(m, m), (width - m, m), (width - m, height - m), (m, height - m)]
-    return [tuple(localizer.to_world((float(u), float(v)), config.FORKLIFT_TAG_HEIGHT_M))
-            for u, v in corners]
+    return {t: [tuple(localizer.to_world((float(u), float(v)), mount["height"])) for u, v in corners]
+            for t, mount in config.TAG_MOUNTS.items()}
 
 
 class TurnDriveFollower:
-    def __init__(self, waypoints: list[tuple[float, float]], loop: bool = True, border=None):
+    def __init__(self, waypoints: list[tuple[float, float]], loop: bool = True, border=None,
+                 fid: str | None = None):
         if not waypoints:
             raise ValueError("need at least one waypoint")
         self.waypoints = waypoints
         self.loop = loop
-        self.border = border    # convex polygon the tag must stay in, or None
+        self.border = border    # {tag: polygon} one tag must stay in (or one polygon, or None)
+        self.fid = fid or config.HERO_FORKLIFT   # whose tags count for the border
         self.index = 0          # waypoint we're driving to
         self.laps = 0
         self.finished = False
@@ -113,9 +136,9 @@ class TurnDriveFollower:
 
     # ------------------------------------------------------------- planning
     def spin_is_safe(self, x, y, theta, delta) -> bool:
-        """Does the tag stay inside the border all the way through a spin of delta rad?"""
+        """Does a tag stay inside the border all the way through a spin of delta rad?"""
         steps = max(1, math.ceil(abs(delta) / SPIN_CHECK_STEP))
-        return all(inside(self.border, tag_at(*spin_pose(x, y, theta, delta * i / steps)))
+        return all(in_view(self.border, *spin_pose(x, y, theta, delta * i / steps), self.fid)
                    for i in range(1, steps + 1))
 
     def move_is_safe(self, x, y, theta, delta, reverse, tx, ty) -> bool:
@@ -130,7 +153,12 @@ class TurnDriveFollower:
         # The leg ends with the PIVOT on the target, so the centre sits behind it.
         cx = tx - config.PIVOT_FWD_M * math.cos(heading)
         cy = ty - config.PIVOT_FWD_M * math.sin(heading)
-        return inside(self.border, tag_at(cx, cy, heading))
+        # Sample the leg: with several tags, the one in view at the start may not be the
+        # one in view at the end, so checking only the end is no longer enough.
+        sx, sy, _ = spin_pose(x, y, theta, delta)
+        steps = max(1, math.ceil(math.hypot(cx - sx, cy - sy) / LEG_CHECK_STEP_M))
+        return all(in_view(self.border, sx + (cx - sx) * i / steps, sy + (cy - sy) * i / steps, heading, self.fid)
+                   for i in range(1, steps + 1))
 
     def choose_plan(self, x, y, theta, tx, ty):
         """Least-turning (reverse, turn_dir) that keeps the tag inside, or None.
@@ -164,7 +192,7 @@ class TurnDriveFollower:
             if self.mode != "drift_stop":
                 self.mode = "done"
             return 0, 0
-        if not inside(self.border, tag_at(x, y, theta)):
+        if not in_view(self.border, x, y, theta, self.fid):
             self.mode, self.driving, self.plan = "border", False, None
             return 0, 0
         cx, cy = x, y                                    # chassis centre (for the border)
