@@ -177,7 +177,8 @@ export function useFleet(cfg: Config) {
           setConn('live')
           setError(undefined)
           addLog('ok', 'Connected to fleet network')
-          c.subscribe(['fleet/+/pose', 'fleet/+/telemetry', 'fleet/+/event', 'fleet/+/path', 'fleet/+/stop', 'tasks/+/status', 'tasks/+/shadow', 'tasks/+/outcome', 'warehouse/locks', 'planners/promoted'])
+          // AWS IoT Core allows at most 8 filters per SUBSCRIBE; more and it drops the connection.
+          c.subscribe(['fleet/+/+', 'tasks/+/+', 'warehouse/+', 'planners/+'])
         })
         c.on('message', onMessage)
         c.on('error', (e) => setError(`MQTT: ${e.message}`))

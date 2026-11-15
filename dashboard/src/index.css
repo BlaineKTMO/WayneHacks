@@ -275,3 +275,5 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .lr-scores { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--muted); margin-top: 2px; }
 .lr-cand.win { color: var(--ok); }
 .lr-cand.lose { color: var(--muted); }
+.map .node-label.left { text-anchor: start; }
+@media (min-width: 1001px) { .map-panel { position: sticky; top: 72px; align-self: start; } }

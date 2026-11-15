@@ -123,7 +123,8 @@ export function WarehouseMap({ graph, forklifts, trails, pallets, locks = {}, se
             </>}
             {n.type === 'slot' && <rect x={x - 0.045} y={y - 0.035} width={0.09} height={0.07} rx={0.004} className="slot" fill="url(#rack)" />}
             {n.type === 'junction' && <rect x={x - 0.012} y={y - 0.012} width={0.024} height={0.024} transform={`rotate(45 ${x} ${y})`} className="junction" />}
-            <text x={x} y={y + (n.type === 'junction' ? 0.045 : 0.062)} className="node-label">{n.id.replace('_', ' ').toUpperCase()}</text>
+            <text x={n.type === 'junction' ? x + 0.045 : x} y={n.type === 'dock' ? y + 0.09 : n.type === 'junction' ? y - 0.025 : y + 0.062}
+                  className={`node-label ${n.type === 'junction' ? 'left' : ''}`}>{n.id.replace('_', ' ').toUpperCase()}</text>
             {(palletAt[n.id] ?? []).map((p, i) => (
               <g key={p}>
                 <rect x={x - 0.018 + i * 0.012} y={y - 0.018} width={0.036} height={0.036} rx={0.003} className="pallet" />
