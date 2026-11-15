@@ -9,6 +9,7 @@ import logging
 
 from botocore.exceptions import ClientError
 
+import mission
 import traffic
 import tree_runner
 
@@ -63,6 +64,7 @@ def handler(msg, _ctx):
                 return
             traffic.on_done(fid, parsed.node)
             on_task_event(fid, parsed.type)
+            mission.poke()
         elif parsed.type == "blocked":
             gave_up = traffic.on_blocked(fid)
             if gave_up:

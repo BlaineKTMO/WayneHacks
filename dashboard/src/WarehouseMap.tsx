@@ -1,7 +1,7 @@
 // Live floor plan, drawn in world metres. Lanes, racking, docks, forklifts with trails and routes.
 import type { Forklift, Graph } from './types'
 
-export const UNIT_COLOURS: Record<string, string> = { 'fl-01': '#ffb020', 'fl-02': '#3ec5ff' }
+export const UNIT_COLOURS: Record<string, string> = { 'fl-01': '#ffb020', 'fl-02': '#3ec5ff', 'fl-03': '#2ee59d', 'fl-04': '#ff6bd6' }
 export const unitColour = (id: string) => UNIT_COLOURS[id] ?? '#b28dff'
 const STALE_MS = 5000
 

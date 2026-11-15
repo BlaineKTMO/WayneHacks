@@ -23,19 +23,25 @@ from aws_cdk import (
 )
 from constructs import Construct
 
-from .dashboard import Dashboard
+from .dashboard import Dashboard, SiteApi
 from .simfleet import SimFleet
 
 
 class FleetStack(Stack):
-    def __init__(self, scope: Construct, cid: str, *, lambda_code_dir: str, sim_code_dir: str, **kw):
+    """One site (warehouse). The demo site also owns the shared pieces: sign-in, website, device
+    registry, SageMaker role and the hosted simulated fleet. Other sites get only their own state,
+    Lambdas, IoT rules and API, and reuse the shared sign-in (values in `shared`)."""
+
+    def __init__(self, scope: Construct, cid: str, *, site: str, warehouse_map: str, table_prefix: str,
+                 lambda_code_dir: str, sim_code_dir: str | None = None, shared: dict | None = None, **kw):
         super().__init__(scope, cid, **kw)
+        is_demo = shared is None
 
         # ---------------- State: DynamoDB (what's true right now) ----------------
         def table(name: str, pk: str, ttl: str | None = None) -> ddb.TableV2:
             return ddb.TableV2(
                 self, name,
-                table_name=f"Fleet{name}",
+                table_name=f"{table_prefix}{name}",
                 partition_key=ddb.Attribute(name=pk, type=ddb.AttributeType.STRING),
                 billing=ddb.Billing.on_demand(),
                 time_to_live_attribute=ttl,
@@ -48,6 +54,7 @@ class FleetStack(Stack):
         pallets = table("Pallets", "pallet_id")
         episodes = table("Episodes", "task_id")
         planners = table("Planners", "version")
+        missions = table("Missions", "mission_id")
 
         # ---------------- History: S3 (everything that ever happened) ------------
         bucket = s3.Bucket(
@@ -81,9 +88,9 @@ class FleetStack(Stack):
             "PALLETS_TABLE": pallets.table_name,
             "PLANNERS_TABLE": planners.table_name,
             "EPISODES_TABLE": episodes.table_name,
-            # demo = 1.5 x 1 m map for the simulated fleet; table = the real tabletop.
-            # Switch without redeploying: uv run python cloud/scripts/use_map.py table
-            "WAREHOUSE_MAP": self.node.try_get_context("warehouse_map") or "demo",
+            "MISSIONS_TABLE": missions.table_name,
+            "SITE": site,                    # every MQTT topic is "<site>/..."
+            "WAREHOUSE_MAP": warehouse_map,  # change without redeploying: cloud/scripts/use_map.py
             "DATA_BUCKET": bucket.bucket_name,
             "IOT_ENDPOINT": endpoint,
         }
@@ -104,15 +111,9 @@ class FleetStack(Stack):
             )
             return f
 
-        publish_policy = iam.PolicyStatement(
+        publish_policy = iam.PolicyStatement(   # this site's topics only
             actions=["iot:Publish"],
-            resources=[
-                self.format_arn(service="iot", resource="topic", resource_name="fleet/*"),
-                self.format_arn(service="iot", resource="topic", resource_name="tasks/*"),
-                self.format_arn(service="iot", resource="topic", resource_name="warehouse/*"),
-                self.format_arn(service="iot", resource="topic", resource_name="planners/*"),
-            ],
-        )
+            resources=[self.format_arn(service="iot", resource="topic", resource_name=f"{site}/*")])
 
         ingest = fn("Ingest", "ingest.handler")
         forklifts.grant_read_write_data(ingest)
@@ -120,6 +121,7 @@ class FleetStack(Stack):
         pallets.grant_read_write_data(ingest)  # tree runner updates pallet locations on Pick/Drop
         edge_locks.grant_read_write_data(ingest)  # traffic control: reservations
         episodes.grant_write_data(ingest)         # tree runner records episodes
+        missions.grant_read_write_data(ingest)    # mission moves finish here
         bucket.grant_put(ingest, "episodes/*")
         ingest.add_to_role_policy(publish_policy)
 
@@ -134,6 +136,7 @@ class FleetStack(Stack):
         forklifts.grant_read_write_data(dispatch)
         pallets.grant_read_write_data(dispatch)
         planners.grant_read_write_data(dispatch)  # shadow win/run counters
+        missions.grant_read_write_data(dispatch)
         edge_locks.grant_read_write_data(dispatch)
         episodes.grant_write_data(dispatch)
         bucket.grant_put(dispatch, "episodes/*")
@@ -153,13 +156,19 @@ class FleetStack(Stack):
         for t in (forklifts, tasks, pallets, edge_locks):
             t.grant_read_write_data(api)  # read for the dashboard; write for POST /demo/reset
         planners.grant_read_write_data(api)  # promote
+        missions.grant_read_write_data(api)  # start / cancel missions
+        episodes.grant_write_data(api)       # mission moves started here can finish instantly
+        bucket.grant_put(api, "episodes/*")
         api.add_to_role_policy(publish_policy)
         # Demo person / hazard is a retained message on warehouse/detections (needs RetainPublish).
         api.add_to_role_policy(iam.PolicyStatement(
             actions=["iot:RetainPublish"],
-            resources=[self.format_arn(service="iot", resource="topic", resource_name="warehouse/*")]))
-        Dashboard(self, "Dashboard", api_fn=api)
-        SimFleet(self, "SimFleet", code_dir=sim_code_dir, forklifts_table=forklifts, api_fn=api)
+            resources=[self.format_arn(service="iot", resource="topic", resource_name=f"{site}/warehouse/*")]))
+        if is_demo:
+            Dashboard(self, "Dashboard", api_fn=api)
+            SimFleet(self, "SimFleet", code_dir=sim_code_dir, forklifts_table=forklifts, api_fn=api, site=site)
+        else:
+            SiteApi(self, "Dashboard", api_fn=api, shared=shared)
 
         # ---------------- IoT rules ----------------------------------------------
         rule_errors = logs.LogGroup(self, "IotRuleErrors",
@@ -190,48 +199,55 @@ class FleetStack(Stack):
                 sql=sql, aws_iot_sql_version="2016-03-23",
                 actions=[iot.CfnTopicRule.ActionProperty(s3=iot.CfnTopicRule.S3ActionProperty(
                     bucket_name=bucket.bucket_name, role_arn=rule_role.role_arn,
-                    key=f"{prefix}/${{parse_time(\"yyyy-MM-dd\", timestamp())}}/${{topic(2)}}/${{timestamp()}}-${{newuuid()}}.json"))],
+                    key=f"{prefix}/${{parse_time(\"yyyy-MM-dd\", timestamp())}}/${{topic(3)}}/${{timestamp()}}-${{newuuid()}}.json"))],
                 error_action=error_action,
             ))
 
+        S = site  # topics are "<site>/fleet/<id>/<kind>": the forklift id is topic(3)
         lambda_rule("IngestTelemetryRule",
-                    "SELECT *, topic(2) AS forklift_id, 'telemetry' AS kind FROM 'fleet/+/telemetry'", ingest)
+                    f"SELECT *, topic(3) AS forklift_id, 'telemetry' AS kind FROM '{S}/fleet/+/telemetry'", ingest)
         lambda_rule("IngestEventRule",
-                    "SELECT *, topic(2) AS forklift_id, 'event' AS kind FROM 'fleet/+/event'", ingest)
+                    f"SELECT *, topic(3) AS forklift_id, 'event' AS kind FROM '{S}/fleet/+/event'", ingest)
         # Pose is 10 Hz; keep ~1 in 10 for the Forklifts table (the dashboard reads live pose from MQTT).
         lambda_rule("IngestPoseRule",
-                    "SELECT *, topic(2) AS forklift_id, 'pose' AS kind FROM 'fleet/+/pose' WHERE ts % 1000 < 100",
+                    f"SELECT *, topic(3) AS forklift_id, 'pose' AS kind FROM '{S}/fleet/+/pose' WHERE ts % 1000 < 100",
                     ingest)
-        lambda_rule("GotoRule",
-                    "SELECT *, topic(2) AS forklift_id FROM 'fleet/+/goto'", planner)
-        lambda_rule("TaskNewRule", "SELECT * FROM 'tasks/new'", dispatch)
-        s3_rule("ArchiveTelemetryRule", "SELECT *, topic(2) AS forklift_id FROM 'fleet/+/telemetry'", "raw/telemetry")
-        s3_rule("ArchiveEventRule", "SELECT *, topic(2) AS forklift_id FROM 'fleet/+/event'", "raw/events")
+        lambda_rule("GotoRule", f"SELECT *, topic(3) AS forklift_id FROM '{S}/fleet/+/goto'", planner)
+        lambda_rule("TaskNewRule", f"SELECT * FROM '{S}/tasks/new'", dispatch)
+        s3_rule("ArchiveTelemetryRule", f"SELECT *, topic(3) AS forklift_id FROM '{S}/fleet/+/telemetry'", "raw/telemetry")
+        s3_rule("ArchiveEventRule", f"SELECT *, topic(3) AS forklift_id FROM '{S}/fleet/+/event'", "raw/events")
+
+        CfnOutput(self, "IotEndpointOut", value=endpoint)
+        CfnOutput(self, "DataBucketName", value=bucket.bucket_name)
+        CfnOutput(self, "Site", value=site)
+        if not is_demo:
+            return
 
         # ---------------- Edge device identity -----------------------------------
         # The certificate itself is created by cloud/scripts/create_edge_cert.py (keeps the
         # private key off CloudFormation). This policy limits the edge to fleet topics.
         topic = lambda p: self.format_arn(service="iot", resource="topic", resource_name=p)
         topicfilter = lambda p: self.format_arn(service="iot", resource="topicfilter", resource_name=p)
+        # The edge laptop may serve any site (default wh1; demo for bridge --sim tests).
         iot.CfnPolicy(self, "EdgePolicy", policy_name="ForkliftEdgePolicy", policy_document={
             "Version": "2012-10-17",
             "Statement": [
                 {"Effect": "Allow", "Action": "iot:Connect",
                  "Resource": self.format_arn(service="iot", resource="client", resource_name="edge-*")},
                 {"Effect": "Allow", "Action": "iot:Publish",
-                 "Resource": [topic("fleet/*"), topic("warehouse/*")]},
+                 "Resource": [topic("*/fleet/*"), topic("*/warehouse/*")]},
                 {"Effect": "Allow", "Action": "iot:RetainPublish",
-                 "Resource": [topic("warehouse/health/*")]},
+                 "Resource": [topic("*/warehouse/health/*")]},
                 {"Effect": "Allow", "Action": "iot:Subscribe",
-                 "Resource": [topicfilter("fleet/*"), topicfilter("warehouse/*")]},
+                 "Resource": [topicfilter("*/fleet/*"), topicfilter("*/warehouse/*")]},
                 {"Effect": "Allow", "Action": "iot:Receive",
-                 "Resource": [topic("fleet/*"), topic("warehouse/*")]},
+                 "Resource": [topic("*/fleet/*"), topic("*/warehouse/*")]},
             ],
         })
         # Device registry (AWS IoT console > Things). Max 3 attributes each (no thing type in CFN). Only the edge laptop has a certificate: the
         # Free-WiLis and the camera are wired to it, so they're registered for inventory/health.
         devices = {
-            "EdgeThing": ("forklift-edge-01", {"role": "edge-laptop", "health_topic": "warehouse/health/edge-01"}),
+            "EdgeThing": ("forklift-edge-01", {"role": "edge-laptop", "site": "wh1"}),
             "Fl01Thing": ("forklift-fl-01", {"role": "forklift", "controller": "free-wili-og", "fleet_id": "fl-01"}),
             "Fl02Thing": ("forklift-fl-02", {"role": "forklift", "controller": "simulated", "fleet_id": "fl-02"}),
             "CamThing": ("camera-01", {"role": "ceiling-camera", "model": "emeet-c950", "attached_to": "edge-01"}),
@@ -270,6 +286,3 @@ class FleetStack(Stack):
                                        arn_format=cdk.ArnFormat.COLON_RESOURCE_NAME)]))
         sm_role.add_to_policy(iam.PolicyStatement(actions=["cloudwatch:PutMetricData"], resources=["*"]))
         CfnOutput(self, "SageMakerRoleArn", value=sm_role.role_arn)
-
-        CfnOutput(self, "IotEndpointOut", value=endpoint)
-        CfnOutput(self, "DataBucketName", value=bucket.bucket_name)

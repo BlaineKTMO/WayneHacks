@@ -3,6 +3,7 @@ import mqtt, { type MqttClient } from 'mqtt'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, signedMqttUrl } from './aws'
 import type { Config } from './config'
+import type { MissionSummary } from './MissionPanel'
 import type { FleetEvent, Forklift, Graph, LogEntry, Path, Pose, Task, TaskStatus, Telemetry } from './types'
 
 export type Conn = 'connecting' | 'live' | 'offline'
@@ -20,6 +21,7 @@ const TRAIL_LEN = 40
 const LOG_LEN = 200
 
 export function useFleet(cfg: Config) {
+  const site = cfg.site ?? 'demo'   // every topic is "<site>/..."; we strip/add the prefix here
   const [graph, setGraph] = useState<Graph>()
   const [forklifts, setForklifts] = useState<Record<string, Forklift>>({})
   const [trails, setTrails] = useState<Record<string, [number, number][]>>({})
@@ -31,6 +33,7 @@ export function useFleet(cfg: Config) {
   const [people, setPeople] = useState<{ x: number; y: number }[]>([])
   const [camera, setCamera] = useState<{ url: string; at: number }>()
   const [health, setHealth] = useState<Record<string, DeviceHealth>>({})
+  const [mission, setMission] = useState<MissionSummary>()
   const [labTick, setLabTick] = useState(0)  // bumps when shadow/outcome/promotion data changes
   const [conn, setConn] = useState<Conn>('connecting')
   const [error, setError] = useState<string>()
@@ -55,7 +58,9 @@ export function useFleet(cfg: Config) {
       return next
     })
 
-  const onMessage = useCallback((topic: string, raw: Uint8Array) => {
+  const onMessage = useCallback((fullTopic: string, raw: Uint8Array) => {
+    if (!fullTopic.startsWith(site + '/')) return   // another site's traffic
+    const topic = fullTopic.slice(site.length + 1)
     if (topic === 'warehouse/camera') {  // raw JPEG bytes from the edge, not JSON
       const url = URL.createObjectURL(new Blob([new Uint8Array(raw)], { type: 'image/jpeg' }))
       setCamera((old) => { if (old) URL.revokeObjectURL(old.url); return { url, at: Date.now() } })
@@ -129,6 +134,14 @@ export function useFleet(cfg: Config) {
         }
       }
     }
+    if (p[0] === 'missions' && p[2] === 'status') {
+      if (p[1] === 'restock') { addLog('ok', 'Aisles restocked'); refreshPallets.current?.(); return }
+      const m = msg as MissionSummary
+      setMission(m)
+      if (m.state === 'done') addLog('ok', `Mission complete: ${m.done}/${m.total} pallets shipped`)
+      refreshPallets.current?.()
+      return
+    }
     if (p[0] === 'tasks' && p[2] === 'shadow') {
       const r = msg as { planner_version: string; sim_cost: number; prod_sim_cost: number; win: boolean; valid: boolean }
       addLog(r.win ? 'ok' : 'info', `Shadow ${r.planner_version}: ${r.valid ? r.sim_cost : 'invalid plan'} vs prod ${r.prod_sim_cost}${r.win ? ' (candidate wins)' : ''}`)
@@ -168,7 +181,7 @@ export function useFleet(cfg: Config) {
       if (s.state === 'done') addLog('ok', `Task ${p[1]} complete`, s.assigned_to ?? undefined)
       refreshPallets.current?.()
     }
-  }, [])
+  }, [site])
 
   useEffect(() => {
     let stopped = false
@@ -207,7 +220,8 @@ export function useFleet(cfg: Config) {
           setError(undefined)
           addLog('ok', 'Connected to fleet network')
           // AWS IoT Core allows at most 8 filters per SUBSCRIBE; more and it drops the connection.
-          c.subscribe(['fleet/+/+', 'tasks/+/+', 'warehouse/#', 'planners/+'])
+          // AWS IoT allows at most 8 filters per SUBSCRIBE
+          c.subscribe(['fleet/+/+', 'tasks/+/+', 'warehouse/#', 'planners/+', 'missions/+/+'].map((f) => `${site}/${f}`))
         })
         c.on('message', onMessage)
         c.on('error', (e) => setError(`MQTT: ${e.message}`))
@@ -241,10 +255,10 @@ export function useFleet(cfg: Config) {
     }
   }, [cfg, onMessage])
 
-  const publish = (topic: string, payload: object) => client.current?.publish(topic, JSON.stringify(payload), { qos: 1 })
+  const publish = (topic: string, payload: object) => client.current?.publish(`${site}/${topic}`, JSON.stringify(payload), { qos: 1 })
 
   return {
-    graph, forklifts, trails, tasks, pallets, locks, people, camera, health, log, stops, conn, error, labTick,
+    graph, forklifts, trails, tasks, pallets, locks, people, camera, health, mission, log, stops, conn, error, labTick,
     placePerson: (x: number, y: number) => api(cfg, '/hazard', 'POST', { x, y }),
     clearPerson: () => api(cfg, '/hazard', 'POST', { clear: true }),
     resetDemo: () => api(cfg, '/demo/reset', 'POST'),

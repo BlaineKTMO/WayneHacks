@@ -16,6 +16,10 @@ Connects over WebSocket signed with your `aws login` credentials (no device cert
 from __future__ import annotations
 
 import argparse
+import os
+
+os.environ.setdefault("SITE", "demo")   # simulated fleet = the Demo site
+os.environ.setdefault("WAREHOUSE_MAP", "mission")
 import json
 import os
 import queue
@@ -48,7 +52,9 @@ BLOCKED_EVERY = 40       # re-send "blocked" every 2 s while waiting at the end 
 def last_known_nodes() -> dict[str, str]:
     """Start where the cloud last saw each forklift, so state stays consistent across restarts."""
     try:
-        items = boto3.resource("dynamodb", region_name=REGION).Table("FleetForklifts").scan()["Items"]
+        from fleet_shared.sites import table_name
+        name = os.environ.get("FORKLIFTS_TABLE") or table_name(os.environ["SITE"], "Forklifts")
+        items = boto3.resource("dynamodb", region_name=REGION).Table(name).scan()["Items"]
         return {i["forklift_id"]: i["node"] for i in items if i.get("node")}
     except Exception as e:
         print(f"(could not read last positions, using defaults: {e})")
@@ -187,7 +193,7 @@ def connect(client_id: str) -> mqtt.Connection:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("forklifts", nargs="*", default=list(START))
+    ap.add_argument("forklifts", nargs="*", help="default: every forklift registered in FleetForklifts")
     ap.add_argument("-v", "--verbose", action="store_true", help="print every received message")
     a = ap.parse_args()
     global VERBOSE
@@ -202,6 +208,8 @@ def main():
             conn.publish(topic=topic, payload=msg.to_json(), qos=mqtt.QoS.AT_MOST_ONCE)
 
     known = last_known_nodes()
+    if not a.forklifts:
+        a.forklifts = sorted(known) or list(START)
     fleet = {fid: SimForklift(fid, graph, publish, known.get(fid)) for fid in a.forklifts}
     for fid, f in fleet.items():
         for kind, topic in (("path", topics.path(fid)), ("stop", topics.stop(fid))):
@@ -229,7 +237,7 @@ def main():
             if n % TELEMETRY_EVERY == 0:
                 publish_raw(topics.health("sim-fleet"), {
                     "source": "sim-fleet", "kind": "sim", "online": True, "uptime_s": int(time.time() - started),
-                    "map": "demo", "sim": True, "camera": {"mode": "simulated"},
+                    "map": os.environ.get("WAREHOUSE_MAP"), "sim": True, "camera": {"mode": "simulated"},
                     "forklifts": {fid: {"link": "simulated", "state": f.state, "battery_v": 7.4, "tag_age_s": 0.0}
                                   for fid, f in fleet.items()}, "ts": int(time.time() * 1000)})
             n += 1

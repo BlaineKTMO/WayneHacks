@@ -40,21 +40,31 @@ def check(name: str, ok: bool, detail: str = "") -> bool:
     return bool(ok)
 
 
-def outputs() -> dict:
-    o = boto3.client("cloudformation", region_name=REGION).describe_stacks(StackName="ForkliftFleet")["Stacks"][0]["Outputs"]
+SITE = "demo"
+
+
+def P(rest: str) -> str:
+    """Site-scoped topic: P("tasks/new") -> "demo/tasks/new"."""
+    return f"{SITE}/{rest}"
+
+
+def outputs(stack: str = "ForkliftFleet") -> dict:
+    o = boto3.client("cloudformation", region_name=REGION).describe_stacks(StackName=stack)["Stacks"][0]["Outputs"]
     return {x["OutputKey"]: x["OutputValue"] for x in o}
 
 
 # ---------------------------------------------------------------- setup
 def reset_fleet(keep_forklifts: bool) -> None:
+    from fleet_shared.sites import table_name
     ddb = boto3.client("dynamodb", region_name=REGION)
-    for item in ddb.scan(TableName="FleetEdgeLocks")["Items"]:
-        ddb.delete_item(TableName="FleetEdgeLocks", Key={"edge_id": item["edge_id"]})
-    for fid in ("fl-01", "fl-02"):
-        ddb.update_item(TableName="FleetForklifts", Key={"forklift_id": {"S": fid}},
+    for item in ddb.scan(TableName=table_name(SITE, "EdgeLocks"))["Items"]:
+        ddb.delete_item(TableName=table_name(SITE, "EdgeLocks"), Key={"edge_id": item["edge_id"]})
+    for item in ddb.scan(TableName=table_name(SITE, "Forklifts"))["Items"]:
+        fid = item["forklift_id"]["S"]
+        ddb.update_item(TableName=table_name(SITE, "Forklifts"), Key={"forklift_id": {"S": fid}},
                         UpdateExpression="REMOVE route, route_task, route_action, window_end, blocked_since, "
                                          "blocked_first, current_task, route_rev")
-    cmd = [sys.executable, str(ROOT / "cloud/scripts/seed.py")] + (["--keep-forklifts"] if keep_forklifts else [])
+    cmd = [sys.executable, str(ROOT / "cloud/scripts/seed.py"), "--site", SITE] + (["--keep-forklifts"] if keep_forklifts else [])
     subprocess.run(cmd, check=True, capture_output=True)
 
 
@@ -114,6 +124,9 @@ class Inbox:
         self.lock = threading.Lock()
 
     def on(self, topic, payload, **_):
+        if not topic.startswith(SITE + "/"):
+            return
+        topic = topic[len(SITE) + 1:]   # compare site-relative topics below
         try:
             data = json.loads(payload)
         except ValueError:
@@ -137,10 +150,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-sim", action="store_true", help="don't start local simulated forklifts")
     ap.add_argument("--cloud-sim", action="store_true", help="use the AWS-hosted simulated fleet (switched on via the API)")
+    ap.add_argument("--site", default="demo", help="demo (simulated, mission map) or wh1 (Warehouse 1)")
     a = ap.parse_args()
+    global SITE
+    SITE = a.site
     if a.cloud_sim:
         a.no_sim = True
-    o = outputs()
+    from fleet_shared.sites import SITES as SITE_INFO
+    o = outputs()                                   # shared sign-in + IoT endpoint (demo stack)
+    if SITE != "demo":                              # this site's own API + bucket
+        so = outputs(SITE_INFO[SITE]["stack"])
+        o = {**o, "DashboardApiUrl": so["DashboardApiUrl"], "DataBucketName": so["DataBucketName"]}
     sim = None
 
     print("\n== Setup")
@@ -170,7 +190,9 @@ def main():
         st, body = api(o, token, "/demo/reset", "POST")
         check("POST /demo/reset", st == 200, str(body))
         _, pl = api(o, token, "/pallets")
-        check("pallets back at their starting slots", {p["pallet_id"]: p["node"] for p in pl}.get("pallet_3") == "slot_A3")
+        _, graph = api(o, token, "/graph")
+        homes = {p["id"]: p["node"] for p in graph.get("pallets", [])}
+        check("pallets back at their starting slots", {p["pallet_id"]: p["node"] for p in pl} == homes)
         _, pls = api(o, token, "/planners")
         check("naive planner in production, counters zeroed",
               any(p["version"] == "v1-naive" and p["stage"] == "prod" for p in pls) and all(not p["shadow_runs"] for p in pls))
@@ -188,7 +210,7 @@ def main():
         print("\n== Browser MQTT")
         inbox = Inbox()
         conn, closed = browser_mqtt(o, token, f"dash-e2e-{uuid.uuid4().hex[:6]}")
-        for f in ("fleet/+/+", "tasks/+/+", "warehouse/#", "planners/+"):
+        for f in [P(x) for x in ("fleet/+/+", "tasks/+/+", "warehouse/#", "planners/+", "missions/+/+")]:
             fut, _ = conn.subscribe(topic=f, qos=mqtt.QoS.AT_LEAST_ONCE, callback=inbox.on)
             fut.result(timeout=10)
         check("connect + 4 subscriptions with Cognito credentials", not closed.is_set())
@@ -205,15 +227,15 @@ def main():
         jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 40])[1].tobytes()
         iot = boto3.client("iot-data", region_name=REGION, endpoint_url=f"https://{o['IotEndpointOut']}")
         t0 = time.time()
-        iot.publish(topic="warehouse/camera", qos=0, payload=jpg)
+        iot.publish(topic=P("warehouse/camera"), qos=0, payload=jpg)
         raw = []
         def grab(topic, payload, **_):
-            if topic == "warehouse/camera":
+            if topic == P("warehouse/camera"):
                 raw.append(bytes(payload))
-        fut, _ = conn.subscribe(topic="warehouse/camera", qos=mqtt.QoS.AT_MOST_ONCE, callback=grab)
+        fut, _ = conn.subscribe(topic=P("warehouse/camera"), qos=mqtt.QoS.AT_MOST_ONCE, callback=grab)
         fut.result(timeout=10)
         time.sleep(0.5)
-        iot.publish(topic="warehouse/camera", qos=0, payload=jpg)
+        iot.publish(topic=P("warehouse/camera"), qos=0, payload=jpg)
         end = time.time() + 10
         while not raw and time.time() < end:
             time.sleep(0.2)
@@ -222,9 +244,10 @@ def main():
         print("\n== Map goto (dashboard publish)")
         _, fls = api(o, token, "/forklifts")
         here = next((f.get("node") for f in fls if f["forklift_id"] == "fl-02"), None)
-        target = "j6" if here != "j6" else "j3"   # somewhere it isn't, so a route is needed
+        juncs = [n["id"] for n in graph["nodes"] if n["type"] == "junction"]
+        target = next(j for j in reversed(juncs) if j != here)   # somewhere it isn't, so a route is needed
         t0 = time.time()
-        conn.publish(topic="fleet/fl-02/goto", payload=json.dumps({"node": target}), qos=mqtt.QoS.AT_LEAST_ONCE)
+        conn.publish(topic=P("fleet/fl-02/goto"), payload=json.dumps({"node": target}), qos=mqtt.QoS.AT_LEAST_ONCE)
         p = inbox.wait(lambda t, d: t == "fleet/fl-02/path", 15, t0)
         check("route planner answers with a path", p is not None, f"fl-02 {here} -> {target}")
         lk = inbox.wait(lambda t, d: t == "warehouse/locks" and "fl-02" in d.get("locks", {}).values(), 15, t0)
@@ -234,7 +257,11 @@ def main():
 
         print("\n== Claude order")
         t0 = time.time()
-        conn.publish(topic="tasks/new", payload=json.dumps({"text": "move pallet 3 to dock B"}), qos=mqtt.QoS.AT_LEAST_ONCE)
+        docks = [n["id"] for n in graph["nodes"] if n["type"] == "dock"]
+        pallet, dock = sorted(homes)[-1], docks[-1]
+        words = f"move pallet {pallet.split('_')[1]} to {dock.replace('_', ' ')}"
+        expected_at = f"shipped:{dock}" if graph.get("docks_ship") else dock
+        conn.publish(topic=P("tasks/new"), payload=json.dumps({"text": words}), qos=mqtt.QoS.AT_LEAST_ONCE)
         pl = inbox.wait(lambda t, d: t.endswith("/status") and d.get("state") == "planning", 15, t0)
         check("task enters planning", pl is not None)
         task_id = pl[0].split("/")[1] if pl else None
@@ -268,7 +295,7 @@ def main():
         check("episode graded (outcome message)", oc is not None, f"cost {oc[1].get('cost')}" if oc else "")
         st, pallets = api(o, token, "/pallets")
         where = {p["pallet_id"]: p["node"] for p in pallets} if st == 200 else {}
-        check("pallet 3 is at dock B", where.get("pallet_3") == "dock_B", where.get("pallet_3", "?"))
+        check(f"{pallet} delivered to {dock}", where.get(pallet) == expected_at, where.get(pallet, "?"))
         s3 = boto3.client("s3", region_name=REGION)
         keys = [x["Key"] for x in s3.list_objects_v2(Bucket=o["DataBucketName"], Prefix="episodes/").get("Contents", [])]
         check("episode stored in S3", any(task_id and k.endswith(f"{task_id}.json") for k in keys))
@@ -302,9 +329,21 @@ def main():
 
         conn.disconnect().result(timeout=5)
 
+        if graph.get("aisles"):
+            print("\n== Mission (whole fleet)")
+            api(o, token, "/missions/restock", "POST")
+            aisle = sorted(graph["aisles"])[-1]
+            t0 = time.time()
+            st, ms = api(o, token, "/missions", "POST", {"assignments": {aisle: docks[:2]}})
+            check(f"mission starts: aisle {aisle} -> {docks[:2]}", st == 200 and ms.get("running", 0) >= 1, str(ms)[:120])
+            md = inbox.wait(lambda t, d: t.startswith("missions/m-") and d.get("state") == "done", 300, t0)
+            check("mission completes (every pallet shipped)", md is not None and md[1]["done"] == md[1]["total"],
+                  f"{md[1]['done']}/{md[1]['total']} in {time.time() - t0:.0f}s" if md else "timeout")
+            api(o, token, "/missions/restock", "POST")
+
         print("\n== Security")
         conn2, closed2 = browser_mqtt(o, token, f"dash-e2e-{uuid.uuid4().hex[:6]}")
-        conn2.publish(topic="fleet/fl-01/telemetry", payload=json.dumps({"battery_v": 1, "motor_a": 0, "state": "FAULT"}),
+        conn2.publish(topic=P("fleet/fl-01/telemetry"), payload=json.dumps({"battery_v": 1, "motor_a": 0, "state": "FAULT"}),
                       qos=mqtt.QoS.AT_LEAST_ONCE)
         closed2.wait(8)
         check("browser cannot fake forklift telemetry (IoT disconnects it)", closed2.is_set())

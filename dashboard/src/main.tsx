@@ -8,6 +8,19 @@ import './index.css'
 
 const root = createRoot(document.getElementById('root')!)
 
+// Reload open tabs after a deploy: a page running old code can be rejected by the cloud
+// (e.g. old MQTT topics), which looks like "connecting, dropping" forever.
+async function deployedVersion(): Promise<string | null> {
+  try { return (await (await fetch('/version.json', { cache: 'no-store' })).json()).version } catch { return null }
+}
+deployedVersion().then((mine) => {
+  if (!mine) return
+  setInterval(async () => {
+    const now = await deployedVersion()
+    if (now && now !== mine) window.location.reload()
+  }, 30_000)
+})
+
 loadConfig()
   .then((cfg) => {
     Amplify.configure({

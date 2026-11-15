@@ -1,0 +1,435 @@
+{
+ "_comment": "MISSION demo map (simulated fleet): 3 aisles x 3 racking slots, 4 truck docks. Docks ship pallets (they leave the floor after a Drop). Switch with: uv run python cloud/scripts/use_map.py mission",
+ "size": {
+  "width": 2.0,
+  "height": 1.3
+ },
+ "docks_ship": true,
+ "aisles": {
+  "A": [
+   "slot_A1",
+   "slot_A2",
+   "slot_A3"
+  ],
+  "B": [
+   "slot_B1",
+   "slot_B2",
+   "slot_B3"
+  ],
+  "C": [
+   "slot_C1",
+   "slot_C2",
+   "slot_C3"
+  ]
+ },
+ "forklifts": {
+  "fl-01": "xA",
+  "fl-02": "xB",
+  "fl-03": "tA",
+  "fl-04": "tB"
+ },
+ "nodes": [
+  {
+   "id": "xA",
+   "x": 0.35,
+   "y": 0.2,
+   "type": "junction"
+  },
+  {
+   "id": "tA",
+   "x": 0.35,
+   "y": 1.1,
+   "type": "junction"
+  },
+  {
+   "id": "a1",
+   "x": 0.35,
+   "y": 0.42,
+   "type": "junction"
+  },
+  {
+   "id": "slot_A1",
+   "x": 0.48,
+   "y": 0.42,
+   "type": "slot"
+  },
+  {
+   "id": "a2",
+   "x": 0.35,
+   "y": 0.65,
+   "type": "junction"
+  },
+  {
+   "id": "slot_A2",
+   "x": 0.48,
+   "y": 0.65,
+   "type": "slot"
+  },
+  {
+   "id": "a3",
+   "x": 0.35,
+   "y": 0.88,
+   "type": "junction"
+  },
+  {
+   "id": "slot_A3",
+   "x": 0.48,
+   "y": 0.88,
+   "type": "slot"
+  },
+  {
+   "id": "xB",
+   "x": 0.75,
+   "y": 0.2,
+   "type": "junction"
+  },
+  {
+   "id": "tB",
+   "x": 0.75,
+   "y": 1.1,
+   "type": "junction"
+  },
+  {
+   "id": "b1",
+   "x": 0.75,
+   "y": 0.42,
+   "type": "junction"
+  },
+  {
+   "id": "slot_B1",
+   "x": 0.88,
+   "y": 0.42,
+   "type": "slot"
+  },
+  {
+   "id": "b2",
+   "x": 0.75,
+   "y": 0.65,
+   "type": "junction"
+  },
+  {
+   "id": "slot_B2",
+   "x": 0.88,
+   "y": 0.65,
+   "type": "slot"
+  },
+  {
+   "id": "b3",
+   "x": 0.75,
+   "y": 0.88,
+   "type": "junction"
+  },
+  {
+   "id": "slot_B3",
+   "x": 0.88,
+   "y": 0.88,
+   "type": "slot"
+  },
+  {
+   "id": "xC",
+   "x": 1.15,
+   "y": 0.2,
+   "type": "junction"
+  },
+  {
+   "id": "tC",
+   "x": 1.15,
+   "y": 1.1,
+   "type": "junction"
+  },
+  {
+   "id": "c1",
+   "x": 1.15,
+   "y": 0.42,
+   "type": "junction"
+  },
+  {
+   "id": "slot_C1",
+   "x": 1.28,
+   "y": 0.42,
+   "type": "slot"
+  },
+  {
+   "id": "c2",
+   "x": 1.15,
+   "y": 0.65,
+   "type": "junction"
+  },
+  {
+   "id": "slot_C2",
+   "x": 1.28,
+   "y": 0.65,
+   "type": "slot"
+  },
+  {
+   "id": "c3",
+   "x": 1.15,
+   "y": 0.88,
+   "type": "junction"
+  },
+  {
+   "id": "slot_C3",
+   "x": 1.28,
+   "y": 0.88,
+   "type": "slot"
+  },
+  {
+   "id": "d1",
+   "x": 1.55,
+   "y": 0.2,
+   "type": "junction"
+  },
+  {
+   "id": "dock_1",
+   "x": 1.85,
+   "y": 0.2,
+   "type": "dock"
+  },
+  {
+   "id": "d2",
+   "x": 1.55,
+   "y": 0.5,
+   "type": "junction"
+  },
+  {
+   "id": "dock_2",
+   "x": 1.85,
+   "y": 0.5,
+   "type": "dock"
+  },
+  {
+   "id": "d3",
+   "x": 1.55,
+   "y": 0.8,
+   "type": "junction"
+  },
+  {
+   "id": "dock_3",
+   "x": 1.85,
+   "y": 0.8,
+   "type": "dock"
+  },
+  {
+   "id": "d4",
+   "x": 1.55,
+   "y": 1.1,
+   "type": "junction"
+  },
+  {
+   "id": "dock_4",
+   "x": 1.85,
+   "y": 1.1,
+   "type": "dock"
+  }
+ ],
+ "edges": [
+  {
+   "from": "xA",
+   "to": "a1",
+   "bidirectional": true
+  },
+  {
+   "from": "a1",
+   "to": "slot_A1",
+   "bidirectional": true
+  },
+  {
+   "from": "a1",
+   "to": "a2",
+   "bidirectional": true
+  },
+  {
+   "from": "a2",
+   "to": "slot_A2",
+   "bidirectional": true
+  },
+  {
+   "from": "a2",
+   "to": "a3",
+   "bidirectional": true
+  },
+  {
+   "from": "a3",
+   "to": "slot_A3",
+   "bidirectional": true
+  },
+  {
+   "from": "a3",
+   "to": "tA",
+   "bidirectional": true
+  },
+  {
+   "from": "xB",
+   "to": "b1",
+   "bidirectional": true
+  },
+  {
+   "from": "b1",
+   "to": "slot_B1",
+   "bidirectional": true
+  },
+  {
+   "from": "b1",
+   "to": "b2",
+   "bidirectional": true
+  },
+  {
+   "from": "b2",
+   "to": "slot_B2",
+   "bidirectional": true
+  },
+  {
+   "from": "b2",
+   "to": "b3",
+   "bidirectional": true
+  },
+  {
+   "from": "b3",
+   "to": "slot_B3",
+   "bidirectional": true
+  },
+  {
+   "from": "b3",
+   "to": "tB",
+   "bidirectional": true
+  },
+  {
+   "from": "xC",
+   "to": "c1",
+   "bidirectional": true
+  },
+  {
+   "from": "c1",
+   "to": "slot_C1",
+   "bidirectional": true
+  },
+  {
+   "from": "c1",
+   "to": "c2",
+   "bidirectional": true
+  },
+  {
+   "from": "c2",
+   "to": "slot_C2",
+   "bidirectional": true
+  },
+  {
+   "from": "c2",
+   "to": "c3",
+   "bidirectional": true
+  },
+  {
+   "from": "c3",
+   "to": "slot_C3",
+   "bidirectional": true
+  },
+  {
+   "from": "c3",
+   "to": "tC",
+   "bidirectional": true
+  },
+  {
+   "from": "d1",
+   "to": "dock_1",
+   "bidirectional": true
+  },
+  {
+   "from": "d2",
+   "to": "dock_2",
+   "bidirectional": true
+  },
+  {
+   "from": "d1",
+   "to": "d2",
+   "bidirectional": true
+  },
+  {
+   "from": "d3",
+   "to": "dock_3",
+   "bidirectional": true
+  },
+  {
+   "from": "d2",
+   "to": "d3",
+   "bidirectional": true
+  },
+  {
+   "from": "d4",
+   "to": "dock_4",
+   "bidirectional": true
+  },
+  {
+   "from": "d3",
+   "to": "d4",
+   "bidirectional": true
+  },
+  {
+   "from": "xA",
+   "to": "xB",
+   "bidirectional": true
+  },
+  {
+   "from": "xB",
+   "to": "xC",
+   "bidirectional": true
+  },
+  {
+   "from": "xC",
+   "to": "d1",
+   "bidirectional": true
+  },
+  {
+   "from": "tA",
+   "to": "tB",
+   "bidirectional": true
+  },
+  {
+   "from": "tB",
+   "to": "tC",
+   "bidirectional": true
+  },
+  {
+   "from": "tC",
+   "to": "d4",
+   "bidirectional": true
+  }
+ ],
+ "pallets": [
+  {
+   "id": "pallet_1",
+   "node": "slot_A1"
+  },
+  {
+   "id": "pallet_2",
+   "node": "slot_A2"
+  },
+  {
+   "id": "pallet_3",
+   "node": "slot_A3"
+  },
+  {
+   "id": "pallet_4",
+   "node": "slot_B1"
+  },
+  {
+   "id": "pallet_5",
+   "node": "slot_B2"
+  },
+  {
+   "id": "pallet_6",
+   "node": "slot_B3"
+  },
+  {
+   "id": "pallet_7",
+   "node": "slot_C1"
+  },
+  {
+   "id": "pallet_8",
+   "node": "slot_C2"
+  },
+  {
+   "id": "pallet_9",
+   "node": "slot_C3"
+  }
+ ]
+}

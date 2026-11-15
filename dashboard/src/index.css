@@ -315,3 +315,33 @@ a.btn-ghost { text-decoration: none; }
 .dev-detail { color: var(--muted); text-align: right; font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-bad .dev-detail { color: var(--danger); }
 .dev-empty { font-size: 13px; color: var(--dim); }
+
+/* ---------- Missions ---------- */
+.ms-grid { display: flex; flex-direction: column; gap: 8px; }
+.ms-row { display: grid; grid-template-columns: 96px 1fr; align-items: center; gap: 10px; }
+.ms-aisle b { display: block; font-size: 14px; }
+.ms-aisle span { font-size: 11px; color: var(--muted); }
+.ms-docks { display: flex; flex-wrap: wrap; gap: 6px; }
+.ms-dock { min-height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--muted); font: inherit; font-size: 13px; }
+.ms-dock.on { background: rgba(255,176,32,.15); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.ms-actions { display: flex; gap: 8px; margin-top: 12px; }
+.ms-btn { min-height: 40px; padding: 0 16px; border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel-2); color: var(--text); font: inherit; font-size: 14px; font-weight: 600; }
+.ms-btn.go { background: var(--accent); border-color: var(--accent); color: #111; flex: 1; }
+.ms-btn.stop { background: rgba(255,77,94,.12); border-color: var(--danger); color: var(--danger); flex: 1; }
+.ms-progress { margin-top: 14px; }
+.ms-bar { height: 10px; border-radius: 99px; background: var(--panel-2); overflow: hidden; }
+.ms-bar div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--ok)); transition: width .5s; }
+.ms-stat { font-size: 13px; color: var(--muted); margin-top: 6px; }
+.ms-stat b { color: var(--text); font-family: var(--mono); }
+.ms-state.done { color: var(--ok); } .ms-state.running { color: var(--accent); } .ms-state.cancelled { color: var(--dim); }
+.ms-perdock { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+.ms-perdock div { background: var(--panel-2); border-radius: 8px; padding: 6px 8px; font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+.ms-perdock b { color: var(--text); font-family: var(--mono); }
+.ms-active { display: flex; align-items: center; gap: 8px; font-size: 12px; font-family: var(--mono); color: var(--muted); margin-top: 6px; }
+.ms-active i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.ms-empty { font-size: 13px; color: var(--dim); }
+
+/* ---------- Site switcher ---------- */
+.site-switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.site-switch-label { font-size: 10px; letter-spacing: .12em; color: var(--dim); border: 1px solid var(--line-2); border-radius: 4px; padding: 1px 5px; }
+.site-switch select { font: inherit; font-size: 13px; color: var(--text); background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 5px 8px; }

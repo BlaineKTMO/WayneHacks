@@ -148,6 +148,9 @@ def _save_and_report(task: dict, tree: dict, fid: str) -> None:
         text=task.get("text"), error=err).to_dict())
     if state != "running":
         record_episode(task, tree, fid, state == "done")
+        if task.get("mission_id"):
+            import mission
+            mission.on_task_finished(task, state == "done")
     log.info("task %s -> %s", task_id, state)
 
 
@@ -219,8 +222,10 @@ def on_event(fid: str, task_id: str, event_type: str, error: str | None = None) 
             table("PALLETS_TABLE").put_item(Item={"pallet_id": leaf["pallet"], "node": f"on:{fid}", "last_seen": now_ms()})
         elif leaf["type"] == "Drop":
             carried = [p for p in from_ddb(table("PALLETS_TABLE").scan()["Items"]) if p["node"] == f"on:{fid}"]
-            for p in carried:
-                table("PALLETS_TABLE").put_item(Item={"pallet_id": p["pallet_id"], "node": leaf["slot"], "last_seen": now_ms()})
+            ship = GRAPH.docks_ship and GRAPH.nodes[leaf["slot"]].type == "dock"
+            for p in carried:   # shipping map: the truck takes it (off the floor, dock free again)
+                where = f"shipped:{leaf['slot']}" if ship else leaf["slot"]
+                table("PALLETS_TABLE").put_item(Item={"pallet_id": p["pallet_id"], "node": where, "last_seen": now_ms()})
     else:
         leaf["status"] = "failure"
         leaf["error"] = error or f"forklift reported {event_type}"

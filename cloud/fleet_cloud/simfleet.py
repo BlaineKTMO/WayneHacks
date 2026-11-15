@@ -30,7 +30,8 @@ BOOT = (
 
 
 class SimFleet(Construct):
-    def __init__(self, scope: Construct, cid: str, *, code_dir: str, forklifts_table, api_fn: lambda_.Function):
+    def __init__(self, scope: Construct, cid: str, *, code_dir: str, forklifts_table, api_fn: lambda_.Function,
+                 site: str = "demo"):
         super().__init__(scope, cid)
         stack = Stack.of(self)
         arn = lambda kind, name: stack.format_arn(service="iot", resource=kind, resource_name=name)
@@ -48,17 +49,18 @@ class SimFleet(Construct):
         forklifts_table.grant_read_data(task.task_role)
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:DescribeEndpoint"], resources=["*"]))
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Connect"], resources=[arn("client", "sim-*")]))
-        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Publish"], resources=[arn("topic", "fleet/*"), arn("topic", "warehouse/health/*")]))
-        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:RetainPublish"], resources=[arn("topic", "warehouse/health/*")]))
+        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Publish"], resources=[arn("topic", f"{site}/fleet/*"), arn("topic", f"{site}/warehouse/health/*")]))
+        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:RetainPublish"], resources=[arn("topic", f"{site}/warehouse/health/*")]))
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Receive"],
-                                                         resources=[arn("topic", "fleet/*"), arn("topic", "warehouse/*")]))
+                                                         resources=[arn("topic", f"{site}/fleet/*"), arn("topic", f"{site}/warehouse/*")]))
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Subscribe"],
-                                                         resources=[arn("topicfilter", "fleet/*"), arn("topicfilter", "warehouse/*")]))
+                                                         resources=[arn("topicfilter", f"{site}/fleet/*"), arn("topicfilter", f"{site}/warehouse/*")]))
         task.add_container(
             "sim",
             image=ecs.ContainerImage.from_registry("public.ecr.aws/docker/library/python:3.12-slim"),
             command=["sh", "-c", BOOT],
-            environment={"CODE_BUCKET": code.s3_bucket_name, "CODE_KEY": code.s3_object_key, "AWS_DEFAULT_REGION": stack.region},
+            environment={"CODE_BUCKET": code.s3_bucket_name, "CODE_KEY": code.s3_object_key, "AWS_DEFAULT_REGION": stack.region,
+                         "SITE": site, "FORKLIFTS_TABLE": forklifts_table.table_name},
             logging=ecs.LogDrivers.aws_logs(stream_prefix="sim", log_group=logs.LogGroup(
                 self, "Logs", retention=logs.RetentionDays.ONE_WEEK, removal_policy=RemovalPolicy.DESTROY)),
         )

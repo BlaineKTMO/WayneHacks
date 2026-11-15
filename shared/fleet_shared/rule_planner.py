@@ -32,7 +32,7 @@ def _move(p: str, dest: str, src: str) -> list[dict]:
 
 def plan(text: str, g: Graph, pallets: dict[str, str]) -> dict | None:
     t = text.lower().strip().rstrip(".")
-    loc = r"((?:dock|slot)[\s_-]*[a-z]\d*|j\d+)"
+    loc = r"((?:dock|slot)[\s_-]*[a-z]?\d*|[a-z]?j\d+|[a-z]\d)"
 
     m = re.search(rf"(?:move|bring|take|put|carry)\s+pallet[\s_]*(\d+)\s+(?:to|into|onto|at)\s+(?:the\s+)?{loc}", t)
     if m:

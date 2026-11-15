@@ -11,7 +11,12 @@ class FakeTable:
         k = Key[self.key]
         return {"Item": dict(self.items[k])} if k in self.items else {}
 
-    def put_item(self, Item, **_):
+    def put_item(self, Item, ConditionExpression=None, ExpressionAttributeValues=None, **_):
+        if ConditionExpression == "rev = :r":   # mission optimistic concurrency
+            cur = self.items.get(Item[self.key], {})
+            if cur.get("rev") != ExpressionAttributeValues[":r"]:
+                from botocore.exceptions import ClientError
+                raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "PutItem")
         self.items[Item[self.key]] = dict(Item)
 
     def scan(self, **_):
@@ -87,8 +92,10 @@ def install(monkeypatch, forklifts, pallets=()):
 
 
 def last_status(sent, task_id):
-    return [p for t, p in sent if t == f"tasks/{task_id}/status"][-1]
+    from fleet_shared import topics
+    return [p for t, p in sent if t == topics.task_status(task_id)][-1]
 
 
 def paths(sent, fid):
-    return [p for t, p in sent if t == f"fleet/{fid}/path"]
+    from fleet_shared import topics
+    return [p for t, p in sent if t == topics.path(fid)]

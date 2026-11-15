@@ -145,11 +145,13 @@ def _replay(node: dict, s: _State, g: Graph, path: str, errors: list[str]) -> _S
             errors.append(f"{path} Drop: forklift will be at {s.at}, not {slot}; add GoTo({slot}) first")
         elif not s.carrying:
             errors.append(f"{path} Drop: not carrying a pallet")
-        elif any(n == slot for n in s.pallets.values()):
+        elif not (g.docks_ship and g.nodes[slot].type == "dock") and any(n == slot for n in s.pallets.values()):
             other = next(p for p, n in s.pallets.items() if n == slot)
             errors.append(f"{path} Drop: {slot} is occupied by {other}")
         else:
-            s.pallets[s.carrying] = slot
+            # On a shipping map the truck takes it: the pallet leaves the floor and the dock is free.
+            ship = g.docks_ship and g.nodes[slot].type == "dock"
+            s.pallets[s.carrying] = f"shipped:{slot}" if ship else slot
         return s
     return s
 

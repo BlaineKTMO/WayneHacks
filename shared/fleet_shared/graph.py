@@ -37,6 +37,9 @@ class Graph:
             if e.get("bidirectional", True):
                 self.adj[b].add(a)
         self.pallets: dict[str, str] = {p["id"]: p["node"] for p in data.get("pallets", [])}
+        self.aisles: dict[str, list[str]] = data.get("aisles", {})         # mission map: aisle -> slots
+        self.docks_ship: bool = bool(data.get("docks_ship"))              # Drop at a dock = loaded on a truck
+        self.forklift_homes: dict[str, str] = data.get("forklifts", {})   # where each forklift starts
 
     # ---- loading ---------------------------------------------------------
     @classmethod
@@ -44,7 +47,8 @@ class Graph:
         if path is None:
             path = os.environ.get("WAREHOUSE_JSON")
         # WAREHOUSE_MAP=table -> the real tabletop (warehouse_table.json); default demo map.
-        name = "warehouse_table.json" if os.environ.get("WAREHOUSE_MAP") == "table" else "warehouse.json"
+        name = {"table": "warehouse_table.json", "mission": "warehouse_mission.json"}.get(
+            os.environ.get("WAREHOUSE_MAP", ""), "warehouse.json")
         candidates = [Path(path)] if path else [
             Path(__file__).parent / name,          # bundled copy (Lambda)
             Path(__file__).parent.parent / name,   # repo: shared/<name>

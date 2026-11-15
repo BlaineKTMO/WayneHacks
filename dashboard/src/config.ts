@@ -6,7 +6,10 @@ export type Config = {
   identityPoolId: string
   apiUrl: string
   iotEndpoint: string
+  sites?: SiteInfo[]   // every warehouse this login can see (deploy.py)
+  site?: string        // the one this view is showing; apiUrl is that site's API
 }
+export type SiteInfo = { id: string; name: string; apiUrl: string; simulated?: boolean }
 
 export async function loadConfig(): Promise<Config> {
   const res = await fetch('/config.json', { cache: 'no-store' })

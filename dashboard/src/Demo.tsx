@@ -2,12 +2,14 @@
 import { Authenticator, ThemeProvider } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from 'react'
-import type { Config } from './config'
+import type { Config, SiteInfo } from './config'
+import { SiteSwitcher, useSite } from './sites'
 import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { SimSwitch } from './SimSwitch'
 import { CameraFeed } from './CameraFeed'
 import { Devices } from './Devices'
+import { MissionPanel } from './MissionPanel'
 import { Architecture } from './Architecture'
 import { Notes, Problem, SideBySide } from './Story'
 import { useFleet } from './useFleet'
@@ -16,24 +18,30 @@ import './demo.css'
 
 const Warehouse3D = lazy(() => import('./Warehouse3D'))
 
-const PRESETS = ['Move pallet 3 to dock B', 'Bring pallet 1 to dock A', 'Swap pallets 1 and 2', 'Move pallet 2 to slot A4']
+const DEMO_PRESETS = ['Move pallet 3 to dock B', 'Bring pallet 1 to dock A', 'Swap pallets 1 and 2', 'Move pallet 2 to slot A4']
+const MISSION_PRESETS = ['Move pallet 1 to dock 4', 'Move pallet 5 to dock 1', 'Bring pallet 9 to dock 2', 'Swap pallets 1 and 9']
 
 export default function Demo({ cfg }: { cfg: Config }) {
   useEffect(() => {
     document.body.classList.add('light')
-    document.title = 'Overhead: the warehouse is the robot'
+    document.title = 'FLOE: Factory Logistics and Orchestration Engine'
     return () => document.body.classList.remove('light')
   }, [])
   return (
     <ThemeProvider colorMode="light">
-      <Authenticator hideSignUp components={{ Header: () => <div className="d-auth-brand">Overhead</div> }}>
-        {() => <Page cfg={cfg} />}
+      <Authenticator hideSignUp components={{ Header: () => <div className="d-auth-brand">FLOE</div> }}>
+        {() => <SitePage cfg={cfg} />}
       </Authenticator>
     </ThemeProvider>
   )
 }
 
-function Page({ cfg }: { cfg: Config }) {
+function SitePage({ cfg }: { cfg: Config }) {
+  const [siteCfg, sites, setSite] = useSite(cfg, 'demo')   // the demo page opens on the simulated site
+  return <Page key={siteCfg.site} cfg={siteCfg} sites={sites} onSite={setSite} />
+}
+
+function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: (id: string) => void }) {
   const fleet = useFleet(cfg)
   const ids = Object.keys(fleet.forklifts).sort()
   const [selected, setSelected] = useState<string>()
@@ -83,10 +91,11 @@ function Page({ cfg }: { cfg: Config }) {
   return (
     <div className="d">
       <nav className="d-nav">
-        <a href="#top" className="d-logo">Overhead</a>
+        <a href="#top" className="d-logo">FLOE</a>
         <div className="d-links">
-          <a href="#problem">Problem</a><a href="#live">Live</a><a href="#how">How it works</a><a href="#architecture">Architecture</a><a href="#safety">Safety</a><a href="#learning">Learning</a><a href="#faq">FAQ</a>
+          <a href="#problem">Problem</a><a href="#live">Live</a><a href="#mission">Mission</a><a href="#how">How it works</a><a href="#architecture">Architecture</a><a href="#safety">Safety</a><a href="#learning">Learning</a><a href="#faq">FAQ</a>
         </div>
+        <SiteSwitcher sites={sites} current={cfg.site} onChange={onSite} className="d-site" />
         <a className="d-nav-cta" href="#live">Try it</a>
       </nav>
 
@@ -94,7 +103,7 @@ function Page({ cfg }: { cfg: Config }) {
       <header id="top" className="d-hero">
         <p className="d-eyebrow"><span className={`d-dot ${live ? 'on' : ''}`} />{status}</p>
         <h1>The warehouse<br />is the robot.</h1>
-        <p className="d-lede">Ceiling cameras see every forklift. One AI plans every job. The forklifts just follow the route, so simple robot chassis become an autonomous fleet.</p>
+        <p className="d-lede">Cameras in the ceiling track every forklift and the cloud plans the work, so the forklifts themselves can stay cheap and simple. We built it with toy forklifts, a webcam and AWS.</p>
         <div className="d-hero-cta">
           <a className="d-btn primary" href="#live">Run the fleet ↓</a>
           <a className="d-btn" href="#problem">Why it matters</a>
@@ -103,22 +112,22 @@ function Page({ cfg }: { cfg: Config }) {
 
       {/* ------------------------------------------------ highlights */}
       <section className="d-highlights">
-        <div><b>0</b><span>sensors on the forklift</span><p>Position comes from AprilTags seen by a camera in the ceiling, not lidar on every truck.</p></div>
-        <div><b>~2 s</b><span>from words to a plan</span><p>Claude on Amazon Bedrock turns an order into a behavior tree that a validator checks before anything moves.<sup><a href="#notes">3</a></sup></p></div>
-        <div><b>&lt;0.5 s</b><span>to stop, even offline</span><p>Safety runs at the edge. If the Wi-Fi drops, the watchdog still stops the motors.</p></div>
+        <div><b>0</b><span>sensors on the forklift</span><p>Each forklift has an AprilTag on its roof. A camera in the ceiling reads it, so the truck doesn’t need lidar.</p></div>
+        <div><b>~2 s</b><span>from words to a plan</span><p>You type an order, Claude on Amazon Bedrock writes a plan, and we check that plan before any forklift moves.<sup><a href="#notes">3</a></sup></p></div>
+        <div><b>&lt;0.5 s</b><span>to stop, even offline</span><p>Stopping is handled on the forklift and the laptop beside the camera. If the Wi-Fi drops, the Free-WiLi’s watchdog cuts the motors anyway.</p></div>
       </section>
 
       {/* ------------------------------------------------ problem */}
       <section id="problem" className="d-section">
-        <h2>Autonomy shouldn’t<br /><span>cost a robot per truck.</span></h2>
-        <p className="d-sub">Warehouses want self-driving forklifts. But today every truck has to see, think and steer for itself, and that bill repeats for the whole fleet.</p>
+        <h2>Self-driving forklifts<br /><span>are expensive.</span></h2>
+        <p className="d-sub">Today each autonomous forklift carries its own sensors and computer. If you want twenty of them, you pay for that hardware twenty times.</p>
         <Problem />
       </section>
 
       {/* ------------------------------------------------ live */}
       <section id="live" className="d-section">
         <h2>Run the fleet<br /><span>from right here.</span></h2>
-        <p className="d-sub">This is the real system, live. Tap an order, or pick a forklift and tap anywhere on the floor.</p>
+        <p className="d-sub">This is the live system. Tap one of the orders, or pick a forklift and tap a spot on the floor to send it there.</p>
 
         <div className="d-live">
           <div className="d-map-card">
@@ -162,7 +171,7 @@ function Page({ cfg }: { cfg: Config }) {
                 : <button className={`d-person ${personMode ? 'arming' : ''}`} onClick={() => setPersonMode((m) => !m)}>
                     🚶 {personMode ? 'Cancel' : 'Put a person on the floor'}
                   </button>}
-              <SimSwitch cfg={cfg} />
+              {cfg.site !== 'wh1' && <SimSwitch cfg={cfg} />}
             </div>
             <div className="d-stops">
               {ids.map((id) => (
@@ -176,7 +185,7 @@ function Page({ cfg }: { cfg: Config }) {
           <div className="d-control">
             <h3>Give an order</h3>
             <div className="d-presets">
-              {PRESETS.map((p) => (
+              {(fleet.graph?.nodes.some((n) => n.id === 'dock_4') ? MISSION_PRESETS : DEMO_PRESETS).map((p) => (
                 <button key={p} className="d-preset" disabled={!canSend} onClick={() => send(p)}>{p}</button>
               ))}
             </div>
@@ -195,18 +204,27 @@ function Page({ cfg }: { cfg: Config }) {
         </div>
       </section>
 
+      {/* ------------------------------------------------ missions */}
+      {fleet.graph?.nodes.some((n) => n.id === 'dock_4') && (
+        <section id="mission" className="d-section">
+          <h2>Empty the aisles.<br /><span>Pick the docks.</span></h2>
+          <p className="d-sub">Choose which aisles ship to which truck docks. The whole fleet splits the work: every free forklift takes the nearest pallet, lanes are reserved, and docks clear as trucks are loaded.</p>
+          <div className="d-mission"><MissionPanel cfg={cfg} live={fleet.mission} pallets={fleet.pallets} /></div>
+        </section>
+      )}
+
       {/* ------------------------------------------------ how */}
       <section id="how" className="d-section">
-        <h2>One loop.<br /><span>Edge sees, cloud thinks.</span></h2>
-        <p className="d-sub">Anything real-time runs next to the cameras. The cloud plans, stores and learns, so a slow network never moves a forklift.</p>
+        <h2>How it works.<br /><span>The edge drives, the cloud plans.</span></h2>
+        <p className="d-sub">Anything time-sensitive runs on the laptop next to the camera. The cloud handles planning, storage and learning, so a slow connection can’t make a forklift swerve.</p>
         <div className="d-flow">
           {[
-            ['Ceiling camera', 'AprilTags give every forklift’s position 15–30× a second.'],
-            ['Edge laptop', 'Localizes, steers, and stops for people. Works offline.'],
-            ['AWS IoT Core', 'Every message meets here: poses, paths, events.'],
-            ['Claude on Bedrock', 'Turns the order into a behavior tree from 7 fixed building blocks.'],
-            ['Validator', 'Replays the plan. Wrong pallet, full slot, bad route: rejected.'],
-            ['Forklift', 'Follows reserved lanes, one short chunk at a time.'],
+            ['Ceiling camera', 'Reads the AprilTags and finds each forklift 15–30 times a second.'],
+            ['Edge laptop', 'Works out positions, steers the forklifts and stops them if a person is in the way. Keeps working offline.'],
+            ['AWS IoT Core', 'The MQTT broker everything talks through: positions, paths and events.'],
+            ['Claude on Bedrock', 'Turns the order into a behavior tree using 7 fixed actions.'],
+            ['Validator', 'Simulates the plan first and rejects it if it grabs the wrong pallet, targets a full slot or takes a bad route.'],
+            ['Forklift', 'Drives the lanes it has reserved, a short section at a time.'],
           ].map(([t, d], i) => (
             <div key={t} className="d-step"><span className="d-step-n">{i + 1}</span><b>{t}</b><p>{d}</p></div>
           ))}
@@ -215,15 +233,15 @@ function Page({ cfg }: { cfg: Config }) {
 
       {/* ------------------------------------------------ architecture */}
       <section id="architecture" className="d-section alt">
-        <h2>Under the hood.<br /><span>Every part, every wire.</span></h2>
-        <p className="d-sub">Four places, one message bus. Pick a flow to trace it, or tap any box to see what it does.</p>
+        <h2>Architecture.<br /><span>Everything we built.</span></h2>
+        <p className="d-sub">Pick a flow to see the path a message takes, or tap a box to read what that part does.</p>
         <Architecture />
       </section>
 
       {/* ------------------------------------------------ side by side */}
       <section id="compare" className="d-section">
         <h2>Side by side.</h2>
-        <p className="d-sub">Same job, different place for the intelligence.</p>
+        <p className="d-sub">The same job, done two ways.</p>
         <SideBySide />
       </section>
 
@@ -231,9 +249,9 @@ function Page({ cfg }: { cfg: Config }) {
       <section id="safety" className="d-section alt">
         <h2>The AI never<br /><span>touches the motors.</span></h2>
         <div className="d-cards">
-          <div><b>No coordinates.</b><p>Claude only sees node names like “dock B”. It can’t steer, and it can’t invent a place.</p></div>
-          <div><b>Checked before moving.</b><p>Every plan is replayed against the live warehouse. Invalid plans go back to Claude once, then fail safely.</p></div>
-          <div><b>Two forklifts, one lane.</b><p>A forklift must reserve the next stops before driving them. Blocked for 5 s? It reroutes. A parked forklift in the way moves aside.</p></div>
+          <div><b>No coordinates.</b><p>Claude only works with place names like “dock B”. It never sees coordinates and has no way to steer.</p></div>
+          <div><b>Checked before moving.</b><p>Each plan is simulated against the current warehouse first. If it fails, Claude gets one more try, and after that the order is cancelled.</p></div>
+          <div><b>Lanes are reserved.</b><p>A forklift has to reserve the next few stops before it drives them. If it’s blocked for 5 seconds it finds another route, and a parked forklift that’s in the way moves aside.</p></div>
         </div>
       </section>
 
@@ -241,7 +259,7 @@ function Page({ cfg }: { cfg: Config }) {
       {/* ------------------------------------------------ learning */}
       <section id="learning" className="d-section">
         <h2>It gets better<br /><span>with every order.</span></h2>
-        <p className="d-sub">Every job is graded by what really happened. A candidate planner quietly writes its own plan for each order, scored in a simulator but never run. When it keeps winning, promote it.</p>
+        <p className="d-sub">We grade every job on what actually happened. A second, candidate planner also writes a plan for each order. Its plan is scored in a simulator but never run, and if it keeps scoring better you can promote it.</p>
         <div className="d-lab"><PlannerLab cfg={cfg} refreshKey={fleet.labTick} /></div>
       </section>
 
@@ -250,8 +268,8 @@ function Page({ cfg }: { cfg: Config }) {
         <h2>Questions?<br /><span>Answers.</span></h2>
         <div className="d-faq">
           {[
-            ['Why not put sensors on each forklift?', 'Lidar and compute on every truck is the expensive part. One camera covers a whole aisle, and the same model serves the whole fleet.'],
-            ['What happens if the internet goes down?', 'Forklifts finish the stretch they’ve reserved and stop. Seeing, steering and the people-stop all run on the edge laptop.'],
+            ['Why not put sensors on each forklift?', 'Putting lidar and a computer on every truck is the expensive part. One ceiling camera covers a whole aisle, and one planner serves the whole fleet.'],
+            ['What happens if the internet goes down?', 'Each forklift finishes the stretch it has reserved and then stops. Tracking, steering and the people-stop all run on the edge laptop, so they keep working.'],
             ['Can the AI do something dangerous?', 'It can only arrange 7 fixed building blocks (go to, pick, drop, wait, retry…). A validator checks the plan against the real warehouse before anything moves.'],
             ['What if Claude is unavailable?', 'A rule-based backup planner handles common orders, and the dashboard shows which planner wrote each plan.'],
             ['What’s it built on?', 'AWS IoT Core, Lambda, DynamoDB, S3, Amazon Bedrock (Claude), Cognito and Amplify. A Free-WiLi drives each forklift’s motors.'],
@@ -264,7 +282,7 @@ function Page({ cfg }: { cfg: Config }) {
       <section className="d-section d-notes-sec"><h4 className="s-notes-h">Notes</h4><Notes /></section>
 
       <footer className="d-foot">
-        <span>Overhead · WayneHacks 2026</span>
+        <span>FLOE · Factory Logistics and Orchestration Engine · WayneHacks 2026</span>
         {confirmReset
           ? <span className="d-reset">Reset pallets, tasks and planners?{' '}
               <button onClick={async () => { setConfirmReset(false); await fleet.resetDemo(); setToast('Demo reset'); setTimeout(() => window.location.reload(), 900) }}>Yes, reset</button>{' '}

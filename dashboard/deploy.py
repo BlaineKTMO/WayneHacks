@@ -21,13 +21,23 @@ STACK = "ForkliftFleet"
 HERE = Path(__file__).resolve().parent
 
 
-def outputs() -> dict:
+SITES = {"demo": ("ForkliftFleet", "Demo site (simulated)"), "wh1": ("ForkliftFleet-wh1", "Warehouse 1")}
+
+
+def outputs(stack: str = STACK) -> dict:
     cf = boto3.client("cloudformation", region_name=REGION)
-    outs = cf.describe_stacks(StackName=STACK)["Stacks"][0]["Outputs"]
+    outs = cf.describe_stacks(StackName=stack)["Stacks"][0]["Outputs"]
     return {o["OutputKey"]: o["OutputValue"] for o in outs}
 
 
 def config(o: dict) -> dict:
+    sites = []
+    for sid, (stack, name) in SITES.items():
+        try:
+            so = o if stack == STACK else outputs(stack)
+            sites.append({"id": sid, "name": name, "apiUrl": so["DashboardApiUrl"], "simulated": sid == "demo"})
+        except Exception:  # noqa: BLE001  (site not deployed yet)
+            pass
     return {
         "region": REGION,
         "userPoolId": o["UserPoolId"],
@@ -35,6 +45,7 @@ def config(o: dict) -> dict:
         "identityPoolId": o["IdentityPoolId"],
         "apiUrl": o["DashboardApiUrl"],
         "iotEndpoint": o["IotEndpointOut"],
+        "sites": sites,
     }
 
 
@@ -54,6 +65,8 @@ def main():
     subprocess.run(["npm", "run", "build"], cwd=HERE, check=True)
     dist = HERE / "dist"
     (dist / "config.json").write_text(cfg)
+    # Open tabs poll this and reload themselves after a deploy (old code may use old topics).
+    (dist / "version.json").write_text(json.dumps({"version": str(int(time.time()))}))
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:

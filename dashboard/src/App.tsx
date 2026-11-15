@@ -1,13 +1,15 @@
 import { Authenticator, ThemeProvider, type Theme } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import type { Config } from './config'
+import type { Config, SiteInfo } from './config'
+import { SiteSwitcher, useSite } from './sites'
 import type { Forklift, LogEntry, Task } from './types'
 import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { SimSwitch } from './SimSwitch'
 import { CameraFeed } from './CameraFeed'
 import { Devices } from './Devices'
+import { MissionPanel } from './MissionPanel'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 
@@ -23,7 +25,7 @@ const ago = (ts?: number) => {
 }
 
 const authTheme: Theme = {
-  name: 'overhead',
+  name: 'floe',
   tokens: {
     colors: {
       background: { primary: { value: '#11141a' }, secondary: { value: '#0b0d11' } },
@@ -38,7 +40,7 @@ const authTheme: Theme = {
 export default function App({ cfg }: { cfg: Config }) {
   return (
     <ThemeProvider theme={authTheme} colorMode="dark">
-      <Authenticator hideSignUp components={{ Header: () => <div className="auth-brand"><Logo /><span>OVERHEAD</span><small>Fleet Control</small></div> }}>
+      <Authenticator hideSignUp components={{ Header: () => <div className="auth-brand"><Logo /><span>FLOE</span><small>Factory Logistics &amp; Orchestration Engine</small></div> }}>
         {({ signOut, user }) => <Console cfg={cfg} email={user?.signInDetails?.loginId} signOut={signOut} />}
       </Authenticator>
     </ThemeProvider>
@@ -59,10 +61,18 @@ function Logo() {
 export type Fleet = ReturnType<typeof useFleet>
 
 function Console({ cfg, email, signOut }: { cfg: Config; email?: string; signOut?: () => void }) {
-  return <ConsoleView fleet={useFleet(cfg)} email={email} signOut={signOut} cfg={cfg} />
+  const [siteCfg, sites, setSite] = useSite(cfg)
+  return <SiteConsole key={siteCfg.site} cfg={siteCfg} sites={sites} onSite={setSite} email={email} signOut={signOut} />
 }
 
-export function ConsoleView({ fleet, email, signOut, cfg }: { fleet: Fleet; email?: string; signOut?: () => void; cfg?: Config }) {
+function SiteConsole({ cfg, sites, onSite, email, signOut }:
+  { cfg: Config; sites: SiteInfo[]; onSite: (id: string) => void; email?: string; signOut?: () => void }) {
+  return <ConsoleView fleet={useFleet(cfg)} email={email} signOut={signOut} cfg={cfg} sites={sites} onSite={onSite} />
+}
+
+export function ConsoleView({ fleet, email, signOut, cfg, sites = [], onSite }:
+  { fleet: Fleet; email?: string; signOut?: () => void; cfg?: Config; sites?: SiteInfo[]; onSite?: (id: string) => void }) {
+  const thisSite = sites.find((s) => s.id === cfg?.site)
   const ids = Object.keys(fleet.forklifts).sort()
   const [selected, setSelected] = useState<string>()
   const [text, setText] = useState('')
@@ -103,10 +113,12 @@ export function ConsoleView({ fleet, email, signOut, cfg }: { fleet: Fleet; emai
   return (
     <div className="shell">
       <header className="topbar">
-        <div className="brand"><Logo /><span className="brand-name">OVERHEAD</span><span className="brand-sub">Fleet Control</span></div>
-        <div className="site"><span className="site-label">SITE</span>Demo Warehouse · Floor 1</div>
+        <div className="brand"><Logo /><span className="brand-name">FLOE</span><span className="brand-sub">Factory Logistics &amp; Orchestration Engine</span></div>
+        {onSite && sites.length > 1
+          ? <SiteSwitcher sites={sites} current={cfg?.site} onChange={onSite} />
+          : <div className="site"><span className="site-label">SITE</span>{thisSite?.name ?? 'Demo site'}</div>}
         <div className="spacer" />
-        {cfg && <SimSwitch cfg={cfg} />}
+        {cfg && thisSite?.simulated !== false && cfg.site !== 'wh1' && <SimSwitch cfg={cfg} />}
         <a className="btn-ghost" href="/demo">Demo page</a>
         <div className={`link link-${fleet.conn}`}><span className="pulse" />{fleet.conn === 'live' ? 'LIVE' : fleet.conn === 'connecting' ? 'CONNECTING' : 'OFFLINE'}</div>
         <div className="clock mono">{clock(now)}</div>
@@ -163,6 +175,13 @@ export function ConsoleView({ fleet, email, signOut, cfg }: { fleet: Fleet; emai
             </div>
             <PlanView task={fleet.tasks.find((t) => t.task_id.startsWith('t-'))} />
           </section>
+
+          {cfg && fleet.graph?.nodes.some((n) => n.id === 'dock_4') && (
+            <section className="panel">
+              <div className="panel-head"><h2>Mission</h2><span className="badge-ai">whole fleet</span></div>
+              <MissionPanel cfg={cfg} live={fleet.mission} pallets={fleet.pallets} />
+            </section>
+          )}
 
           <section className="panel">
             <div className="panel-head"><h2>Devices</h2></div>

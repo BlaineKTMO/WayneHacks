@@ -31,9 +31,9 @@ export function Problem() {
   return (
     <>
       <div className="s-problem">
-        <div><b>Every truck is its own robot.</b><p>Autonomous forklifts carry their own lidar, cameras and computer. Each one sees only what’s in front of it.</p></div>
-        <div><b>Scaling means buying it all again.</b><p>Truck twenty needs the same autonomy kit as truck one. The bill grows with the fleet, not the floor.</p></div>
-        <div><b>Telling them what to do is hard.</b><p>Jobs are set up as waypoints and rules in fleet software. Nobody on the floor can just say “move pallet 3 to dock B.”</p></div>
+        <div><b>Each truck is its own robot.</b><p>It carries lidar, cameras and a computer, and it only knows about what’s in front of it.</p></div>
+        <div><b>More trucks, more kits.</b><p>The twentieth truck needs the same autonomy hardware as the first one, so cost goes up with every truck you add.</p></div>
+        <div><b>Giving orders is clunky.</b><p>Someone has to set up waypoints and rules in fleet software. A worker on the floor can’t just ask for pallet 3 at dock B.</p></div>
       </div>
 
       <ScaleAnim />
@@ -42,14 +42,14 @@ export function Problem() {
         <div className="s-chart-head">
           <div>
             <h3>Autonomy hardware cost as the fleet grows</h3>
-            <p>Drag to add forklifts. Change any assumption below.</p>
+            <p>Drag the slider to change the fleet size. You can edit the prices under Assumptions.</p>
           </div>
           <div className="s-readout">
             <span className="s-a"><b>{usd(a)}</b> per-truck kits</span>
-            <span className="s-b"><b>{usd(b)}</b> Overhead</span>
+            <span className="s-b"><b>{usd(b)}</b> FLOE</span>
           </div>
         </div>
-        <svg viewBox={`0 0 ${W} ${H}`} className="s-svg" role="img" aria-label={`With ${n} forklifts: ${usd(a)} with per-truck kits vs ${usd(b)} with Overhead`}>
+        <svg viewBox={`0 0 ${W} ${H}`} className="s-svg" role="img" aria-label={`With ${n} forklifts: ${usd(a)} with per-truck kits vs ${usd(b)} with FLOE`}>
           {[0, .25, .5, .75, 1].map((f) => (
             <g key={f}><line x1={P.l} x2={W - P.r} y1={y(top * f)} y2={y(top * f)} className="s-grid" />
               <text x={P.l - 8} y={y(top * f) + 4} textAnchor="end" className="s-tick">{usd(top * f)}</text></g>
@@ -63,8 +63,8 @@ export function Problem() {
         </svg>
         <input type="range" min={1} max={MAX} value={n} onChange={(e) => setN(+e.target.value)} className="s-range" aria-label="Forklifts in the fleet" />
         <p className="s-caption"><b>{n} forklift{n > 1 ? 's' : ''}.</b>{' '}
-          {a > b ? `Overhead saves ${usd(a - b)} (${Math.round((1 - b / a) * 100)}%). Each extra truck adds ${usd(v.perTruck)}, not ${usd(v.kit)}.`
-            : even ? `Per-truck kits are cheaper this small. Overhead pulls ahead at ${even} trucks.` : 'With these numbers, per-truck kits stay cheaper.'}</p>
+          {a > b ? `FLOE comes out ${usd(a - b)} cheaper (${Math.round((1 - b / a) * 100)}% less). Each extra truck costs ${usd(v.perTruck)} instead of ${usd(v.kit)}.`
+            : even ? `At this size per-truck kits are cheaper. FLOE becomes cheaper at ${even} trucks.` : 'With these numbers, per-truck kits stay cheaper.'}</p>
 
         <details className="s-assume">
           <summary>Assumptions</summary>
@@ -85,19 +85,19 @@ export function Problem() {
 }
 
 const ROWS: [string, string, string][] = [
-  ['Seeing', 'Lidar and cameras on every truck', 'Ceiling cameras. Zero sensors on the truck'],
+  ['Seeing', 'Lidar and cameras on every truck', 'Ceiling cameras, no sensors on the truck'],
   ['Adding a truck', 'Another full autonomy kit', 'Drive-by-wire and a printed AprilTag'],
   ['Giving an order', 'Waypoints and rules in fleet software', 'Plain English, checked before anything moves'],
   ['Two trucks, one aisle', 'Each truck reacts to what it sees', 'Lanes reserved centrally, before driving'],
   ['Network drops', 'Depends on the vendor', 'Edge keeps steering and stops in under 0.5 s'],
-  ['Getting better', 'Wait for a software update', 'Every job graded; a shadow planner earns promotion'],
+  ['Getting better', 'Wait for a software update', 'Jobs are graded, and a better planner can be promoted'],
 ]
 
 export function SideBySide() {
   return (
     <div className="s-table-wrap">
       <table className="s-table">
-        <thead><tr><th /><th>Per-truck autonomy</th><th>Overhead</th></tr></thead>
+        <thead><tr><th /><th>Per-truck autonomy</th><th>FLOE</th></tr></thead>
         <tbody>{ROWS.map(([k, a, b]) => <tr key={k}><th>{k}</th><td>{a}</td><td><b>{b}</b></td></tr>)}</tbody>
       </table>
     </div>
@@ -108,7 +108,7 @@ export function Notes() {
   return (
     <ol id="notes" className="s-notes">
       <li>Low end of the $35K–$65K quoted for a Balyo kit plus conversion (<a href="https://www.grabarobot.com/blog/autonomous-forklift-robot-warehouse-2026/" target="_blank" rel="noreferrer">Grab a Robot, 2026 buying guide</a>). Complete autonomous forklifts run about $75K–$150K for standard pallet handling (<a href="https://www.agvnetwork.com/agv-cost-estimation-how-much-does-an-automated-guided-vehicle-cost" target="_blank" rel="noreferrer">AGV Network</a>). We use the low figure on purpose.</li>
-      <li>Our estimates, not quotes: an industrial ceiling camera per aisle zone, one edge PC per site, and a drive-by-wire interface plus printed AprilTag per truck. Both sides exclude integration (often ~30% more), installation and running costs, including Overhead’s AWS bill.</li>
+      <li>Our estimates, not quotes: an industrial ceiling camera per aisle zone, one edge PC per site, and a drive-by-wire interface plus printed AprilTag per truck. Both sides exclude integration (often ~30% more), installation and running costs, including FLOE’s AWS bill.</li>
       <li>“~2 s” is typical time from order to validated plan with Claude on Amazon Bedrock; “&lt;0.5 s” is the Free-WiLi watchdog timeout.</li>
     </ol>
   )
@@ -187,12 +187,12 @@ function ScaleAnim() {
         <div className="sa-panel">
           <div className="sa-label"><span className="sa-pill a">Per-truck autonomy</span><b key={a} className="sa-total a">{usd(a)}</b></div>
           <Floor n={n} mode="a" />
-          <p>Every truck brings its own lidar, cameras and computer.</p>
+          <p>Each new truck needs its own lidar, cameras and computer.</p>
         </div>
         <div className="sa-panel">
-          <div className="sa-label"><span className="sa-pill b">Overhead</span><b key={b} className="sa-total b">{usd(b)}</b></div>
+          <div className="sa-label"><span className="sa-pill b">FLOE</span><b key={b} className="sa-total b">{usd(b)}</b></div>
           <Floor n={n} mode="b" />
-          <p>Cameras already cover the floor. A new truck just needs a tag.</p>
+          <p>The ceiling cameras already cover the floor, so a new truck only needs a tag and drive-by-wire.</p>
         </div>
       </div>
     </div>

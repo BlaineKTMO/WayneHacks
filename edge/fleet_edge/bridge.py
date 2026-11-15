@@ -28,7 +28,14 @@ import time
 import uuid
 from pathlib import Path
 
-from awscrt import auth, mqtt
+import os  # noqa: E402
+
+os.environ.setdefault("SITE", "wh1")   # the edge laptop serves Warehouse 1 unless told otherwise
+from fleet_shared.sites import SITES as _SITES  # noqa: E402
+
+os.environ.setdefault("WAREHOUSE_MAP", _SITES.get(os.environ["SITE"], {}).get("map", "demo"))
+
+from awscrt import auth, mqtt  # noqa: E402
 from awsiot import mqtt_connection_builder
 
 from fleet_shared import topics

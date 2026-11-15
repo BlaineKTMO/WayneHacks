@@ -7,6 +7,7 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-2")
 import traffic  # noqa: E402
 import tree_runner  # noqa: E402
 from fakes import install, last_status, paths  # noqa: E402
+from fleet_shared import topics  # noqa: E402
 from fleet_shared.behavior_tree import with_status  # noqa: E402
 
 
@@ -51,7 +52,7 @@ def test_full_move(monkeypatch):
     assert last_status(sent, "t1")["state"] == "done"
     assert tables["EPISODES_TABLE"].items["t1"]["success"] is True          # graded episode recorded
     assert any(k.endswith("/t1.json") for k in tables["_s3"])
-    assert [p for t, p in sent if t == "tasks/t1/outcome"][-1]["success"] is True
+    assert [p for t, p in sent if t == topics.task_outcome("t1")][-1]["success"] is True
     assert locks.held() == {"dock_B": "fl-01"}  # only the parking spot stays reserved
 
 

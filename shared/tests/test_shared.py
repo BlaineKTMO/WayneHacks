@@ -6,8 +6,9 @@ from fleet_shared.messages import Event, Path, Pose, Telemetry
 
 
 def test_topics():
-    assert topics.pose("fl-01") == "fleet/fl-01/pose"
-    assert topics.forklift_from_topic("fleet/fl-02/event") == "fl-02"
+    assert topics.pose("fl-01") == f"{topics.SITE}/fleet/fl-01/pose"      # every topic is site-scoped
+    assert topics.forklift_from_topic("wh1/fleet/fl-02/event") == "fl-02"
+    assert topics.LOCKS.startswith(topics.SITE + "/")
     with pytest.raises(ValueError):
         topics.pose("forklift1")
 
@@ -76,3 +77,18 @@ def test_table_map_is_valid_and_inside_the_safe_rectangle(monkeypatch):
                 assert r and all(g.nodes[n].type == "junction" for n in r[1:-1])
     for node in g.pallets.values():
         assert node in g.nodes
+
+
+def test_mission_map(monkeypatch):
+    monkeypatch.setenv("WAREHOUSE_MAP", "mission")
+    g = Graph.load()
+    assert g.docks_ship and set(g.aisles) == {"A", "B", "C"} and len(g.pallets) == 9
+    docks = [n for n in g.nodes.values() if n.type == "dock"]
+    assert len(docks) == 4
+    for slots in g.aisles.values():          # every slot can reach every dock, never through slots/docks
+        for s in slots:
+            for d in docks:
+                r = g.astar(s, d.id)
+                assert r and all(g.nodes[n].type == "junction" for n in r[1:-1])
+    for home in g.forklift_homes.values():
+        assert home in g.nodes and g.nodes[home].type == "junction"

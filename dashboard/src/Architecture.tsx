@@ -27,12 +27,12 @@ const NODES: Node[] = [
     detail: 'Publishes pose, telemetry, events and JPEG camera frames; receives paths and stops. The device policy only allows fleet/* and warehouse/* topics.' },
   // client
   { id: 'ipad', x: 282, y: 512, w: 224, h: 76, g: 'client', icon: '▭', title: 'iPad / browser', tech: 'React · Vite · Three.js · Amplify UI',
-    detail: 'This page. Live 3D floor over MQTT WebSockets, plain-English orders, stop buttons and the planner lab.' },
+    detail: 'This page. It shows the live 3D floor over MQTT WebSockets and has the order box, stop buttons and planner lab.' },
   // aws
   { id: 'sim', x: 582, y: 62, w: W, h: H, g: 'aws', icon: '▤', title: 'Sim fleet', tech: 'ECS Fargate · scales 0 → 1',
     detail: 'Simulated forklifts that drive real routes on the real cloud. The “Simulated fleet” switch scales the service from 0 to 1.' },
   { id: 'iot', x: 582, y: 162, w: W, h: 168, g: 'aws', icon: '✦', title: 'AWS IoT Core', tech: 'MQTT broker · topic rules · device policy',
-    detail: 'Every message meets here: fleet/+/pose, telemetry, event, goto, path, tasks/new, warehouse/camera. Topic rules fan out to Lambda and S3.' },
+    detail: 'All messages go through here: fleet/+/pose, telemetry, event, goto, path, tasks/new, warehouse/camera. Topic rules fan out to Lambda and S3.' },
   { id: 's3', x: 582, y: 412, w: W, h: H, g: 'aws', icon: '▥', title: 'Amazon S3', tech: 'Data lake · raw/ by date',
     detail: 'IoT rules archive every telemetry message and event. Planner episodes land here for evaluation.' },
   { id: 'ing', x: 790, y: 62, w: W, h: H, g: 'aws', icon: 'λ', title: 'Ingest', tech: 'Lambda · Python 3.12 · arm64',

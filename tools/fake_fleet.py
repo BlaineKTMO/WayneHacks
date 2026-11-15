@@ -6,6 +6,7 @@
   uv run python tools/fake_fleet.py task "move pallet 3 to dock B"
   uv run python tools/fake_fleet.py status fl-01             # read the Forklifts row
 
+Site: set SITE=wh1 for Warehouse 1 (default demo).
 Watch live messages in the AWS console: IoT Core > MQTT test client > subscribe to "#".
 """
 
@@ -49,7 +50,8 @@ def main():
     elif a.cmd == "task":
         pub(topics.TASKS_NEW, TaskNew(text=a.text))
     elif a.cmd == "status":
-        item = boto3.resource("dynamodb", region_name=REGION).Table("FleetForklifts").get_item(
+        from fleet_shared.sites import table_name
+        item = boto3.resource("dynamodb", region_name=REGION).Table(table_name(topics.SITE, "Forklifts")).get_item(
             Key={"forklift_id": a.fid}).get("Item")
         print(json.dumps(item, indent=2, default=str))
 

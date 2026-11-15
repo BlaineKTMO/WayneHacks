@@ -5,6 +5,7 @@ import os
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-2")
 
 import route_planner  # noqa: E402
+from fleet_shared import topics  # noqa: E402
 
 
 def test_current_node_prefers_reported_node():
@@ -64,7 +65,7 @@ def test_shadow_planner_scored_and_counted(monkeypatch):
     monkeypatch.setattr(dispatch, "make_plan", lambda *a, **k: (good, fl))
     res = dispatch.run_shadows({"task_id": "t9"}, [{"version": "v2"}], "move pallet 3 to dock B", pallets, [fl], prod_cost, snap)
     assert res[0]["win"] and res[0]["sim_cost"] < prod_cost
-    assert sent[0][0] == "tasks/t9/shadow" and planners.items["v2"]["counted"]
+    assert sent[0][0] == topics.task_shadow("t9") and planners.items["v2"]["counted"]
 
 
 def test_pick_forklift_availability():

@@ -26,23 +26,31 @@ PLANNERS = [
 
 
 def main():
+    import os
     import sys
+
+    from fleet_shared.sites import SITES, table_name
     keep_forklifts = "--keep-forklifts" in sys.argv  # a fleet is running: don't contradict real positions
+    site = sys.argv[sys.argv.index("--site") + 1] if "--site" in sys.argv else "demo"
+    os.environ["WAREHOUSE_MAP"] = SITES[site]["map"]
+    T = lambda n: table_name(site, n)  # noqa: E731
     ddb = boto3.resource("dynamodb", region_name=REGION)
     g = Graph.load()
-    with ddb.Table("FleetPallets").batch_writer() as w:
+    docks = [n.id for n in g.nodes.values() if n.type == "dock"]
+    roster = g.forklift_homes or ({"fl-01": docks[0]} if site != "demo" else {"fl-01": docks[0], "fl-02": docks[1]})
+    with ddb.Table(T("Pallets")).batch_writer() as w:
         for pid, node in g.pallets.items():
             w.put_item(Item={"pallet_id": pid, "node": node})
     if not keep_forklifts:
-        with ddb.Table("FleetForklifts").batch_writer() as w:
-            for fid, node in FORKLIFTS.items():
+        with ddb.Table(T("Forklifts")).batch_writer() as w:
+            for fid, node in roster.items():
                 w.put_item(Item={"forklift_id": fid, "node": node, "state": "IDLE"})
-    planners = ddb.Table("FleetPlanners")
+    planners = ddb.Table(T("Planners"))
     if not planners.scan(Limit=1).get("Items"):
         for p in PLANNERS:
             planners.put_item(Item=p)
         print(f"seeded {len(PLANNERS)} planners")
-    print(f"seeded {len(g.pallets)} pallets, {len(FORKLIFTS)} forklifts")
+    print(f"[{site}] seeded {len(g.pallets)} pallets, forklifts {sorted(roster)}")
 
 
 if __name__ == "__main__":

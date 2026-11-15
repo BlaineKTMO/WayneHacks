@@ -10,6 +10,7 @@ import time
 
 import boto3
 
+import mission
 from common import from_ddb, publish, table
 from fleet_shared import topics
 from fleet_shared.graph import Graph
@@ -94,7 +95,7 @@ def promote(version: str):
                                  "ConditionExpression": "stage = :p",
                                  "ExpressionAttributeValues": {":sh": {"S": "shadow"}, ":p": {"S": "prod"}}}})
     boto3.client("dynamodb").transact_write_items(TransactItems=items)
-    publish("planners/promoted", {"version": version, "previous": prev, "ts": now})
+    publish(topics.PLANNERS_PROMOTED, {"version": version, "previous": prev, "ts": now})
     return ok({"version": version, "previous": prev})
 
 
@@ -155,7 +156,7 @@ def reset_demo() -> dict:
             ExpressionAttributeValues={":s": stage})
     set_hazard({"clear": True})
     publish(topics.LOCKS, {"locks": {}, "ts": now})
-    publish("planners/promoted", {"version": "v1-naive", "previous": None, "ts": now, "reset": True})
+    publish(topics.PLANNERS_PROMOTED, {"version": "v1-naive", "previous": None, "ts": now, "reset": True})
     return {"reset": True, "cancelled_tasks": cancelled}
 
 
@@ -199,6 +200,22 @@ def handler(event, _ctx):
             return ok(set_hazard(json.loads(event.get("body") or "{}")))
         if route == "POST /demo/reset":
             return ok(reset_demo())
+        if route == "GET /missions/current":
+            mid = mission.current_id()
+            m = mission.get(mid) if mid else None
+            return ok({"map_has_aisles": bool(GRAPH.aisles), "aisles": GRAPH.aisles,
+                       "docks": [n.id for n in GRAPH.nodes.values() if n.type == "dock"],
+                       "mission": mission.summary(m) if m else None})
+        if route == "POST /missions":
+            body = json.loads(event.get("body") or "{}")
+            return ok(mission.start(body.get("assignments") or {}))
+        if route == "POST /missions/current/cancel":
+            return ok(mission.cancel() or {"state": "none"})
+        if route == "POST /missions/restock":
+            mid = mission.current_id()
+            if mid and mission.get(mid).get("status") == "running":
+                return err(409, "conflict", "a mission is running: cancel it first")
+            return ok({"restocked": mission.restock()})
         if route == "POST /iot/attach":
             return ok(attach_iot(event))
         return err(404, "not_found", route)

@@ -25,7 +25,53 @@ from aws_cdk import (
 from constructs import Construct
 
 
+ROUTES = [
+    (apigw.HttpMethod.GET, "/graph"), (apigw.HttpMethod.GET, "/forklifts"), (apigw.HttpMethod.GET, "/pallets"),
+    (apigw.HttpMethod.GET, "/tasks"), (apigw.HttpMethod.GET, "/tasks/{task_id}"),
+    (apigw.HttpMethod.POST, "/forklifts/{forklift_id}/stop"), (apigw.HttpMethod.POST, "/iot/attach"),
+    (apigw.HttpMethod.GET, "/planners"), (apigw.HttpMethod.GET, "/planners/compare"),
+    (apigw.HttpMethod.POST, "/planners/{version}/promote"),
+    (apigw.HttpMethod.POST, "/hazard"), (apigw.HttpMethod.POST, "/demo/reset"),
+    (apigw.HttpMethod.GET, "/missions/current"), (apigw.HttpMethod.POST, "/missions"),
+    (apigw.HttpMethod.POST, "/missions/current/cancel"), (apigw.HttpMethod.POST, "/missions/restock"),
+]
+SIM_ROUTES = [(apigw.HttpMethod.GET, "/sim"), (apigw.HttpMethod.POST, "/sim")]
+
+
+def _http_api(scope: Construct, api_fn: lambda_.Function, authorizer, name: str, with_sim: bool) -> apigw.HttpApi:
+    http = apigw.HttpApi(
+        scope, "Api", api_name=name,
+        cors_preflight=apigw.CorsPreflightOptions(
+            allow_origins=["*"], allow_headers=["authorization", "content-type"],
+            allow_methods=[apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST]),
+        default_authorizer=authorizer)
+    for method, path in ROUTES + (SIM_ROUTES if with_sim else []):
+        http.add_routes(path=path, methods=[method],
+                        integration=integrations.HttpLambdaIntegration(f"R{method.value}{path}", api_fn))
+    return http
+
+
+class SiteApi(Construct):
+    """HTTP API for a non-demo site, authorized by the shared user pool (passed as plain values,
+    read from the demo stack's outputs at synth time, so there are no cross-stack exports)."""
+
+    def __init__(self, scope: Construct, cid: str, *, api_fn: lambda_.Function, shared: dict):
+        super().__init__(scope, cid)
+        stack = Stack.of(self)
+        api_fn.add_environment("USER_POOL_PROVIDER", f"cognito-idp.{stack.region}.amazonaws.com/{shared['UserPoolId']}")
+        api_fn.add_environment("IDENTITY_POOL_ID", shared["IdentityPoolId"])
+        api_fn.add_environment("DASHBOARD_IOT_POLICY", "DashboardIotPolicy")
+        api_fn.add_to_role_policy(iam.PolicyStatement(actions=["iot:AttachPolicy"], resources=["*"]))
+        auth = authorizers.HttpJwtAuthorizer(
+            "Jwt", f"https://cognito-idp.{stack.region}.amazonaws.com/{shared['UserPoolId']}",
+            jwt_audience=[shared["UserPoolClientId"]])
+        http = _http_api(self, api_fn, auth, f"ForkliftDashboardApi-{stack.stack_name}", with_sim=False)
+        CfnOutput(stack, "DashboardApiUrl", value=http.api_endpoint)
+
+
 class Dashboard(Construct):
+    """Shared sign-in, browser IoT access and website (demo stack), plus the demo site's API."""
+
     def __init__(self, scope: Construct, cid: str, *, api_fn: lambda_.Function):
         super().__init__(scope, cid)
         stack = Stack.of(self)
@@ -65,17 +111,14 @@ class Dashboard(Construct):
                 },
                 assume_role_action="sts:AssumeRoleWithWebIdentity"),
         )
-        # Read everything live; publish only commands. Browsers can never fake telemetry.
+        # Read everything live, at every site; publish only commands. Browsers can never fake telemetry.
+        kinds = ("fleet", "warehouse", "tasks", "planners", "missions")
         iot_statements = [
             {"Effect": "Allow", "Action": "iot:Connect", "Resource": arn("client", "dash-*")},
-            {"Effect": "Allow", "Action": "iot:Subscribe",
-             "Resource": [arn("topicfilter", "fleet/*"), arn("topicfilter", "warehouse/*"), arn("topicfilter", "tasks/*"),
-                          arn("topicfilter", "planners/*")]},
-            {"Effect": "Allow", "Action": "iot:Receive",
-             "Resource": [arn("topic", "fleet/*"), arn("topic", "warehouse/*"), arn("topic", "tasks/*"),
-                          arn("topic", "planners/*")]},
+            {"Effect": "Allow", "Action": "iot:Subscribe", "Resource": [arn("topicfilter", f"*/{k}/*") for k in kinds]},
+            {"Effect": "Allow", "Action": "iot:Receive", "Resource": [arn("topic", f"*/{k}/*") for k in kinds]},
             {"Effect": "Allow", "Action": "iot:Publish",
-             "Resource": [arn("topic", "tasks/new"), arn("topic", "fleet/*/goto")]},
+             "Resource": [arn("topic", "*/tasks/new"), arn("topic", "*/fleet/*/goto")]},
         ]
         for s in iot_statements:
             user_role.add_to_policy(iam.PolicyStatement(
@@ -95,34 +138,8 @@ class Dashboard(Construct):
         # identity, which api.py derives from their own token.
         api_fn.add_to_role_policy(iam.PolicyStatement(actions=["iot:AttachPolicy"], resources=["*"]))
 
-        http = apigw.HttpApi(
-            self, "Api",
-            api_name="ForkliftDashboardApi",
-            cors_preflight=apigw.CorsPreflightOptions(
-                allow_origins=["*"],
-                allow_headers=["authorization", "content-type"],
-                allow_methods=[apigw.CorsHttpMethod.GET, apigw.CorsHttpMethod.POST]),
-            default_authorizer=authorizers.HttpUserPoolAuthorizer(
-                "Jwt", pool, user_pool_clients=[client]),
-        )
-        for method, path in [
-            (apigw.HttpMethod.GET, "/graph"),
-            (apigw.HttpMethod.GET, "/forklifts"),
-            (apigw.HttpMethod.GET, "/pallets"),
-            (apigw.HttpMethod.GET, "/tasks"),
-            (apigw.HttpMethod.GET, "/tasks/{task_id}"),
-            (apigw.HttpMethod.POST, "/forklifts/{forklift_id}/stop"),
-            (apigw.HttpMethod.POST, "/iot/attach"),
-            (apigw.HttpMethod.GET, "/planners"),
-            (apigw.HttpMethod.GET, "/planners/compare"),
-            (apigw.HttpMethod.POST, "/planners/{version}/promote"),
-            (apigw.HttpMethod.GET, "/sim"),
-            (apigw.HttpMethod.POST, "/sim"),
-            (apigw.HttpMethod.POST, "/hazard"),
-            (apigw.HttpMethod.POST, "/demo/reset"),
-        ]:
-            http.add_routes(path=path, methods=[method],
-                            integration=integrations.HttpLambdaIntegration(f"R{method.value}{path}", api_fn))
+        http = _http_api(self, api_fn, authorizers.HttpUserPoolAuthorizer("Jwt", pool, user_pool_clients=[client]),
+                         "ForkliftDashboardApi", with_sim=True)
 
         # ---------------- Hosting (deployed by dashboard/deploy.py) -------------
         app = amplify.CfnApp(self, "Hosting", name="forklift-dashboard", platform="WEB",

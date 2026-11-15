@@ -80,3 +80,21 @@ def test_sim_scores_shorter_plans_lower():
     assert simulate(MOVE_3_TO_B, snap, G).cost == good.cost              # deterministic
     assert not simulate(seq(pick("pallet_3")), snap, G).success           # invalid -> failure cost
     assert simulate(seq(pick("pallet_3")), snap, G).cost >= 100
+
+
+def test_shipping_docks_accept_repeated_drops(monkeypatch):
+    monkeypatch.setenv("WAREHOUSE_MAP", "mission")
+    gm = Graph.load()
+    pal = dict(gm.pallets)
+    two = seq(goto("slot_A1"), pick("pallet_1"), goto("dock_1"), drop("dock_1"),
+              goto("slot_A2"), pick("pallet_2"), goto("dock_1"), drop("dock_1"))
+    assert validate(two, gm, pal, start_node="xA") == []           # dock_1 free again after shipping
+
+
+def test_rule_planner_numbered_docks(monkeypatch):
+    monkeypatch.setenv("WAREHOUSE_MAP", "mission")
+    from fleet_shared import rule_planner
+    gm = Graph.load()
+    t = rule_planner.plan("Move pallet 4 to dock 2", gm, dict(gm.pallets))
+    assert t and t["children"][-1] == {"type": "Drop", "slot": "dock_2"}
+    assert rule_planner.plan("move pallet 3 to dock B", G, PALLETS) == MOVE_3_TO_B   # demo map unchanged
