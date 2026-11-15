@@ -61,7 +61,7 @@ class Graph:
         return min(self.nodes.values(), key=lambda n: math.hypot(n.x - x, n.y - y)).id
 
     def path_length(self, path: list[str]) -> float:
-        return sum(self.dist(a, b) for a, b in zip(path, path[1:], strict=False))
+        return sum(self.dist(a, b) for a, b in zip(path, path[1:]))  # noqa: B905 (py3.9: SageMaker image)
 
     # ---- planning --------------------------------------------------------
     def astar(

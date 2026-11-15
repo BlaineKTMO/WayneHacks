@@ -7,6 +7,7 @@ Message flow (see shared/fleet_shared/topics.py):
   tasks/new                                               -> dispatch Lambda -> tasks/{id}/status
 """
 
+import aws_cdk as cdk
 from aws_cdk import (
     CfnOutput,
     Duration,
@@ -223,6 +224,26 @@ class FleetStack(Stack):
             ],
         })
         iot.CfnThing(self, "EdgeThing", thing_name="forklift-edge-01")
+
+        # ---------------- MLOps: SageMaker Processing role (mlops/run_sagemaker.py) -----
+        sm_role = iam.Role(self, "SageMakerEvalRole", assumed_by=iam.ServicePrincipal("sagemaker.amazonaws.com"),
+                           description="Offline planner evaluation (mlops/evaluate.py) as a SageMaker Processing job")
+        bucket.grant_read(sm_role, "episodes/*")
+        bucket.grant_read(sm_role, "mlops-code/*")
+        bucket.grant_read_write(sm_role, "evalsets/*")
+        bucket.grant_read_write(sm_role, "planners/*")
+        sm_role.add_to_policy(iam.PolicyStatement(actions=["s3:ListBucket"], resources=[bucket.bucket_arn]))
+        planners.grant_read_write_data(sm_role)
+        sm_role.add_to_policy(iam.PolicyStatement(
+            actions=["bedrock:InvokeModel"],
+            resources=[self.format_arn(service="bedrock", resource="inference-profile", resource_name="us.anthropic.claude-*"),
+                       "arn:aws:bedrock:*::foundation-model/anthropic.claude-*"]))
+        sm_role.add_to_policy(iam.PolicyStatement(
+            actions=["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"],
+            resources=[self.format_arn(service="logs", resource="log-group", resource_name="/aws/sagemaker/*",
+                                       arn_format=cdk.ArnFormat.COLON_RESOURCE_NAME)]))
+        sm_role.add_to_policy(iam.PolicyStatement(actions=["cloudwatch:PutMetricData"], resources=["*"]))
+        CfnOutput(self, "SageMakerRoleArn", value=sm_role.role_arn)
 
         CfnOutput(self, "IotEndpointOut", value=endpoint)
         CfnOutput(self, "DataBucketName", value=bucket.bucket_name)

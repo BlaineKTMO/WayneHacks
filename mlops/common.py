@@ -23,6 +23,8 @@ sys.path.insert(0, str(ROOT / "cloud" / "lambdas"))
 
 
 def bucket() -> str:
+    if os.environ.get("DATA_BUCKET"):  # set inside the SageMaker job
+        return os.environ["DATA_BUCKET"]
     outs = boto3.client("cloudformation", region_name=REGION).describe_stacks(StackName=STACK)["Stacks"][0]["Outputs"]
     return next(o["OutputValue"] for o in outs if o["OutputKey"] == "DataBucketName")
 

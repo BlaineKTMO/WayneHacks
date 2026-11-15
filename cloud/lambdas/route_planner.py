@@ -4,6 +4,8 @@ Ring 2: "click a node on the map, the forklift drives there".
 Ring 4: routing and reservations go through traffic.start_route.
 """
 
+from __future__ import annotations
+
 import logging
 import time
 import uuid

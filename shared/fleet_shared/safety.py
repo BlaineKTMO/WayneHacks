@@ -67,7 +67,7 @@ class Guard:
         for p in people:
             if math.hypot(p["x"] - x, p["y"] - y) < PERSON_RADIUS_M:
                 return True
-            for (ax, ay), (bx, by) in zip(pts, pts[1:], strict=False):
+            for (ax, ay), (bx, by) in zip(pts, pts[1:]):  # noqa: B905
                 if _seg_dist(p["x"], p["y"], ax, ay, bx, by) < PERSON_RADIUS_M:
                     return True
         return False

@@ -1,5 +1,7 @@
 """Helpers shared by all Lambdas: AWS clients, MQTT publish, DynamoDB float handling."""
 
+from __future__ import annotations
+
 import json
 import os
 from decimal import Decimal

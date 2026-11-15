@@ -3,6 +3,8 @@
 The rule SQL adds `forklift_id` (from the topic) and `kind` ("telemetry" | "event" | "pose").
 """
 
+from __future__ import annotations
+
 import logging
 
 from botocore.exceptions import ClientError
