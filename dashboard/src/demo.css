@@ -152,3 +152,7 @@ p.d-hint { margin: -4px 4px 10px; }
 .d-reset-btn, .d-reset button { background: none; border: 1px solid var(--line-2); color: var(--muted); border-radius: 99px; padding: 6px 14px; font: inherit; font-size: 13px; min-height: 36px; }
 .d-reset button:first-of-type { background: var(--danger); border-color: var(--danger); color: #fff; }
 @media (max-width: 560px) { .d-actions { grid-template-columns: 1fr; } }
+
+.d-cam { margin-top: 16px; border-radius: 14px; }
+.d-cam .cam-head { background: var(--bg); }
+.d-cam .cam-empty { background: var(--panel-2); color: var(--muted); }

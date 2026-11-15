@@ -117,6 +117,10 @@ TAG_BORDER_MARGIN_PX = 60
 ALLOW_REVERSE = False         # target behind -> back up instead of turning. Off for the loop: its
                               # clearances were checked for forward driving only
 
+# ---------------------------------------------------------------- live camera feed (bridge.py)
+CAMERA_STREAM_FPS = 4         # frames/s sent to the website over MQTT. 0 = off
+CAMERA_STREAM_WIDTH = 640     # px; JPEGs must stay under IoT Core's 128 KB message limit
+
 # ---------------------------------------------------------------- fork
 FORK_SPEED = 60               # fork motor command, 0..100. + = up.
 FORK_STEP_MS = 300            # how long one key press in step4 runs the fork

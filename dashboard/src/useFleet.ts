@@ -23,6 +23,7 @@ export function useFleet(cfg: Config) {
   const [stops, setStops] = useState(0)
   const [locks, setLocks] = useState<Record<string, string>>({})
   const [people, setPeople] = useState<{ x: number; y: number }[]>([])
+  const [camera, setCamera] = useState<{ url: string; at: number }>()
   const [labTick, setLabTick] = useState(0)  // bumps when shadow/outcome/promotion data changes
   const [conn, setConn] = useState<Conn>('connecting')
   const [error, setError] = useState<string>()
@@ -48,6 +49,11 @@ export function useFleet(cfg: Config) {
     })
 
   const onMessage = useCallback((topic: string, raw: Uint8Array) => {
+    if (topic === 'warehouse/camera') {  // raw JPEG bytes from the edge, not JSON
+      const url = URL.createObjectURL(new Blob([new Uint8Array(raw)], { type: 'image/jpeg' }))
+      setCamera((old) => { if (old) URL.revokeObjectURL(old.url); return { url, at: Date.now() } })
+      return
+    }
     let msg: any // eslint-disable-line @typescript-eslint/no-explicit-any -- MQTT JSON, narrowed per topic below
     try {
       msg = JSON.parse(new TextDecoder().decode(raw))
@@ -227,7 +233,7 @@ export function useFleet(cfg: Config) {
   const publish = (topic: string, payload: object) => client.current?.publish(topic, JSON.stringify(payload), { qos: 1 })
 
   return {
-    graph, forklifts, trails, tasks, pallets, locks, people, log, stops, conn, error, labTick,
+    graph, forklifts, trails, tasks, pallets, locks, people, camera, log, stops, conn, error, labTick,
     placePerson: (x: number, y: number) => api(cfg, '/hazard', 'POST', { x, y }),
     clearPerson: () => api(cfg, '/hazard', 'POST', { clear: true }),
     resetDemo: () => api(cfg, '/demo/reset', 'POST'),

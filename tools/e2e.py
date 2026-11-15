@@ -195,6 +195,26 @@ def main():
         got = inbox.wait(lambda t, d: t.endswith("/pose"), 15)
         check("live forklift poses arriving", got is not None, got[0] if got else "no pose in 15s (is a fleet running?)")
 
+        print("\n== Camera feed")
+        import numpy as np, cv2  # noqa: E401  (edge group)
+        img = (np.random.default_rng(0).random((480, 640, 3)) * 255).astype("uint8")
+        jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 40])[1].tobytes()
+        iot = boto3.client("iot-data", region_name=REGION, endpoint_url=f"https://{o['IotEndpointOut']}")
+        t0 = time.time()
+        iot.publish(topic="warehouse/camera", qos=0, payload=jpg)
+        raw = []
+        def grab(topic, payload, **_):
+            if topic == "warehouse/camera":
+                raw.append(bytes(payload))
+        fut, _ = conn.subscribe(topic="warehouse/camera", qos=mqtt.QoS.AT_MOST_ONCE, callback=grab)
+        fut.result(timeout=10)
+        time.sleep(0.5)
+        iot.publish(topic="warehouse/camera", qos=0, payload=jpg)
+        end = time.time() + 10
+        while not raw and time.time() < end:
+            time.sleep(0.2)
+        check("browser receives a camera JPEG intact", bool(raw) and raw[0] == jpg, f"{len(jpg) // 1024} KB")
+
         print("\n== Map goto (dashboard publish)")
         _, fls = api(o, token, "/forklifts")
         here = next((f.get("node") for f in fls if f["forklift_id"] == "fl-02"), None)

@@ -290,3 +290,13 @@ a.btn-ghost { text-decoration: none; }
 /* ---------- People ---------- */
 .map .person-zone { fill: rgba(255,77,94,.12); stroke: #ff4d5e; stroke-width: .003; stroke-dasharray: .012 .008; animation: blink 1.2s steps(2) infinite; }
 .map .person-dot { fill: #ff4d5e; }
+
+/* ---------- Camera feed ---------- */
+.cam { border-radius: 10px; overflow: hidden; background: #000; }
+.cam-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); background: var(--panel-2); }
+.cam-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); }
+.cam-dot.on { background: var(--danger); animation: blink 1.2s steps(2) infinite; }
+.cam-age { margin-left: auto; font-family: var(--mono); }
+.cam img { display: block; width: 100%; height: auto; }
+.cam img.stale { opacity: .45; filter: grayscale(1); }
+.cam-empty { padding: 28px 16px; color: var(--dim); font-size: 13px; text-align: center; background: var(--panel); }

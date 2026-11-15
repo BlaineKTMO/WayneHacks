@@ -252,3 +252,23 @@ def test_bridge_abandons_route_when_follower_refuses():
     u.tick(0.05, (0.2, 0.2, 0.0))
     events = [m.type for t, m in sent if t.endswith("/event")]
     assert events[-1] == "fault" and u.state == "STOPPED" and u.follower is None
+
+
+def test_bridge_pick_runs_fork_then_reports_done():
+    from fleet_edge.bridge import Unit
+    from fleet_shared.graph import Graph
+    from fleet_shared.messages import Path
+
+    g = Graph.load()
+    sent, forks = [], []
+    link = SimLink(x=g.nodes["slot_A3"].x, y=g.nodes["slot_A3"].y, theta=0.0)
+    link.fork = lambda speed, ms: forks.append((speed, ms))
+    u = Unit("fl-01", link, g, lambda topic, msg: sent.append((topic, msg)))
+    u.tick(0.0, (link.x, link.y, link.theta))
+    u.node = "slot_A3"
+    u.on_message("path", Path(task_id="t", nodes=g.to_path_nodes(["slot_A3"]), action="pick").to_json().encode())
+    u.tick(0.05, (link.x, link.y, link.theta))
+    assert forks and forks[0][0] > 0                                  # lifting
+    assert not [m for t, m in sent if t.endswith("/event") and m.type == "done"]   # not done yet
+    u.tick(0.05 + config.FORK_LIFT_MS / 1000 + 0.01, (link.x, link.y, link.theta))
+    assert [m for t, m in sent if t.endswith("/event")][-1].type == "done"

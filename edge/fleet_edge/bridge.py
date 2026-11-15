@@ -64,6 +64,7 @@ class Unit:
         self.pose: tuple[float, float, float] | None = None
         self.last_seen = 0.0
         self.last_blocked = 0.0
+        self.fork_until = 0.0     # monotonic time a fork move ends (0 = none)
         self.inbox: queue.Queue = queue.Queue()
 
     def on_message(self, kind: str, payload: bytes):  # MQTT thread: just queue it
@@ -78,6 +79,7 @@ class Unit:
                 reason = Stop.from_json(payload).reason
                 self.link.stop(reason)
                 self.follower, self.path, self.waiting, self.state = None, None, False, "STOPPED"
+                self.fork_until = 0.0
                 print(f"[{self.fid}] STOP ({reason})")
             elif kind == "path":
                 p = PathMsg.from_json(payload)
@@ -150,23 +152,50 @@ class Unit:
                     self.follower, self.state, self.waiting = None, "BLOCKED", True
                     self.last_blocked = now
                     self._event("blocked")
+                elif self.path.action in ("pick", "drop"):
+                    # Pick = lift, Drop = lower. The firmware runs the fork for FORK_LIFT_MS and stops
+                    # it itself; we report "done" when that time is up, without blocking the loop.
+                    up = self.path.action == "pick"
+                    self.link.fork(config.FORK_SPEED if up else -config.FORK_SPEED, config.FORK_LIFT_MS)
+                    self.fork_until = now + config.FORK_LIFT_MS / 1000
+                    self.follower, self.state = None, "DRIVING"
+                    print(f"[{self.fid}] fork {'up' if up else 'down'} ({config.FORK_LIFT_MS} ms)")
                 else:
-                    if self.path.action:
-                        time.sleep(0.5)  # TODO(forks): send the fork servo command here
-                    self._event("done")
-                    print(f"[{self.fid}] done at {self.node}")
-                    self.follower, self.path, self.state = None, None, "IDLE"
+                    self._finish()
+        elif self.fork_until:
+            self.link.wheels(0, 0)
+            if now >= self.fork_until:
+                self.fork_until = 0.0
+                self._finish()
         else:
             self.link.wheels(0, 0)  # keeps the Free-WiLi watchdog fed while idle
             if self.waiting and now - self.last_blocked > BLOCKED_EVERY_S:
                 self.last_blocked = now
                 self._event("blocked")
 
+    def _finish(self):
+        self._event("done")
+        print(f"[{self.fid}] done at {self.node}")
+        self.follower, self.path, self.state = None, None, "IDLE"
+
     def telemetry(self):
         t = self.link.poll()
         motor = 0.02 * (abs(getattr(self.link, "left", 0)) + abs(getattr(self.link, "right", 0)))
         self.publish(topics.telemetry(self.fid), Telemetry(
             battery_v=t.battery_v if t else 0.0, motor_a=round(motor, 2), state=self.state, node=self.node))
+
+
+def encode_frame(frame) -> bytes | None:
+    """Downscale + JPEG for the website. Lowers quality until it fits an MQTT message."""
+    import cv2
+    h, w = frame.shape[:2]
+    scale = config.CAMERA_STREAM_WIDTH / w
+    small = cv2.resize(frame, (config.CAMERA_STREAM_WIDTH, int(h * scale))) if scale < 1 else frame
+    for q in (70, 55, 40, 25):
+        ok, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, q])
+        if ok and len(buf) < 110_000:
+            return buf.tobytes()
+    return None
 
 
 def connect(use_iam: bool, region: str = "us-east-2") -> mqtt.Connection:
@@ -244,13 +273,21 @@ def main():
     print(f"bridge up: {', '.join(units)} ({'sim' if a.sim else 'camera + Free-WiLi'})")
 
     n = 0
+    last_frame = 0.0
     try:
         while True:
             t0 = time.monotonic()
             if a.sim:
                 seen = {fid: (u.link.x, u.link.y, u.link.theta) for fid, u in units.items()}
             else:
-                poses = localizer.process(detector.detect(camera.read()))
+                frame = camera.read()
+                poses = localizer.process(detector.detect(frame))
+                if config.CAMERA_STREAM_FPS and t0 - last_frame >= 1 / config.CAMERA_STREAM_FPS:
+                    last_frame = t0
+                    jpg = encode_frame(frame)
+                    if jpg:
+                        with lock:
+                            conn.publish(topic=topics.CAMERA, payload=jpg, qos=mqtt.QoS.AT_MOST_ONCE)
                 seen = {fid: (p.x, p.y, p.theta) for fid, p in poses.items()}
             for fid, u in units.items():
                 u.tick(t0, seen.get(fid))

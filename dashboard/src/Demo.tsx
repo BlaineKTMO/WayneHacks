@@ -6,6 +6,7 @@ import type { Config } from './config'
 import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { SimSwitch } from './SimSwitch'
+import { CameraFeed } from './CameraFeed'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 import './demo.css'
@@ -174,6 +175,7 @@ function Page({ cfg }: { cfg: Config }) {
               <button type="submit" disabled={!canSend || !text.trim()}>Send</button>
             </form>
             {!canSend && live && <p className="d-busy">A job is in progress. New orders unlock when it finishes.</p>}
+            <CameraFeed camera={fleet.camera} className="d-cam" />
             <div id="plan" className="d-plan">
               <h4>Claude's plan</h4>
               <PlanView task={latest} />

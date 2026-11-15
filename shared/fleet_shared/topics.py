@@ -20,6 +20,7 @@ def goto(fid: str) -> str:       return f"fleet/{_check(fid)}/goto"        # das
 
 DETECTIONS = "warehouse/detections"
 LOCKS = "warehouse/locks"          # cloud -> dashboard, on change
+CAMERA = "warehouse/camera"        # edge -> dashboard, ~4 fps, raw JPEG bytes (not JSON)
 TASKS_NEW = "tasks/new"
 
 
