@@ -26,6 +26,9 @@ class FakeTable:
                     ConditionExpression=None, **_):
         names, values = ExpressionAttributeNames or {}, ExpressionAttributeValues or {}
         item = self.items.setdefault(Key[self.key], dict(Key))
+        if ConditionExpression and "current_task" in ConditionExpression and item.get("current_task") not in (None,):
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
         if ConditionExpression == "attribute_not_exists(route_rev)" and "route_rev" in item or \
            ConditionExpression == "route_rev = :expected" and item.get("route_rev") != values[":expected"]:
             from botocore.exceptions import ClientError

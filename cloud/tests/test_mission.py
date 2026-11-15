@@ -102,3 +102,22 @@ def test_retry_of_a_carried_pallet_goes_to_the_same_forklift(monkeypatch, missio
     assert mv["forklift"] == "fl-01"                                   # the one carrying it
     steps = [s["type"] for s in tables["TASKS_TABLE"].items[mv["task_id"]]["tree"]["children"]]
     assert steps == ["GoTo", "Drop"]                                   # no second Pick
+
+
+def test_concurrent_dispatch_never_double_books_a_forklift(monkeypatch, mission_map):
+    mission, traffic, tree_runner = mission_map
+    from fakes import FakeTable, install
+    now = mission.now_ms()
+    tables, locks, sent = install(monkeypatch, [{"forklift_id": "fl-01", "node": "xA", "last_seen": now}],
+                                  [{"pallet_id": p, "node": n} for p, n in mission.GRAPH.pallets.items()])
+    tables["MISSIONS_TABLE"] = FakeTable("mission_id")
+    monkeypatch.setattr(mission, "table", lambda name: tables[name])
+    monkeypatch.setattr(mission, "publish", lambda t, p: sent.append((t, p)))
+    s = mission.start({"A": ["dock_1"]})
+    stale = [dict(f) for f in tables["FORKLIFTS_TABLE"].items.values()]
+    for f in stale:
+        f.pop("current_task", None); f.pop("route", None)
+    monkeypatch.setattr(mission, "_free_forklifts", lambda: [dict(f) for f in stale])   # a racing dispatcher's stale view
+    mission.dispatch_next(s["mission_id"])
+    m = mission.get(s["mission_id"])
+    assert [mv["state"] for mv in m["moves"]].count("running") == 1                     # still one move for one forklift

@@ -62,6 +62,7 @@ def handler(msg, _ctx):
             on_task_event(fid, "fault", gave_up)
         elif parsed.state == "IDLE":
             resend_lost_step(fid)
+            idle_heartbeat(fid)
     elif kind == "event":
         if parsed.type == "node_reached":
             traffic.on_node_reached(fid, parsed.node)
@@ -77,6 +78,16 @@ def handler(msg, _ctx):
             gave_up = traffic.on_blocked(fid)
             if gave_up:
                 on_task_event(fid, "fault", gave_up)
+
+
+def idle_heartbeat(fid: str) -> None:
+    """An idle forklift checked in: if a mission has pending moves, hand one out. Missions must not
+    depend on someone finishing a job first (e.g. a mission started while the fleet was restarting)."""
+    item = table("FORKLIFTS_TABLE").get_item(Key={"forklift_id": fid}).get("Item") or {}
+    if item.get("current_task") or item.get("route"):
+        return
+    mission.poke()
+    traffic.park_if_dead_end(fid)
 
 
 def resend_lost_step(fid: str) -> None:

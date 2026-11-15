@@ -32,5 +32,6 @@ def test_telemetry_without_node_keeps_position(monkeypatch):
     monkeypatch.setattr(ingest.traffic, "renew", lambda fid, node: None)
     monkeypatch.setattr(ingest.traffic, "retry_if_stuck", lambda fid, state=None: None)
     monkeypatch.setattr(ingest, "resend_lost_step", lambda fid: None)
+    monkeypatch.setattr(ingest, "idle_heartbeat", lambda fid: None)
     ingest.handler({"forklift_id": "fl-01", "kind": "telemetry", "battery_v": 7.4, "motor_a": 0, "state": "IDLE", "node": None}, None)
     assert t.items["fl-01"]["node"] == "j3"

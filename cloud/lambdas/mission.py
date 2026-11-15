@@ -133,7 +133,10 @@ def dispatch_next(mission_id: str) -> int:
         started.clear()
         if m.get("status") != "running":
             return None
-        free = _free_forklifts()
+        # Exclude forklifts this mission already has running, read under the same rev as the moves:
+        # concurrent dispatchers (heartbeats) then can't hand one forklift two moves.
+        busy = {mv["forklift"] for mv in m["moves"] if mv["state"] == "running"}
+        free = [f for f in _free_forklifts() if f["forklift_id"] not in busy]
         pending = [mv for mv in m["moves"] if mv["state"] == "pending"]
         changed = False
         # A retried move whose pallet is already on a forklift's forks can only go to THAT forklift,
@@ -162,7 +165,21 @@ def dispatch_next(mission_id: str) -> int:
         return m if changed else None
 
     m = _mutate(mission_id, fn)
+    claimed = []
     for mv, fid in started:
+        # Atomic claim: only if the forklift has no task (a free-text order could race us).
+        try:
+            table("FORKLIFTS_TABLE").update_item(
+                Key={"forklift_id": fid}, UpdateExpression="SET current_task = :t",
+                ConditionExpression="attribute_not_exists(current_task) OR current_task = :none",
+                ExpressionAttributeValues={":t": mv["task_id"], ":none": None})
+            claimed.append((mv, fid))
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+            log.warning("%s was taken before %s could start; re-queued", fid, mv["task_id"])
+            _mutate(mission_id, lambda mm, tid=mv["task_id"]: _requeue(mm, tid))
+    for mv, fid in claimed:
         steps = [{"type": "GoTo", "node": mv["dock"]}, {"type": "Drop", "slot": mv["dock"]}]
         if not mv.get("resume"):   # fresh move: fetch the pallet first
             steps = [{"type": "GoTo", "node": mv["slot"]}, {"type": "Pick", "pallet": mv["pallet"]}] + steps
@@ -171,12 +188,18 @@ def dispatch_next(mission_id: str) -> int:
                 "assigned_to": fid, "tree": tree, "planner_version": "mission", "mission_id": mission_id,
                 "created_at": now_ms(), "started_at": now_ms()}
         table("TASKS_TABLE").put_item(Item=to_ddb(task))
-        table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fid}, UpdateExpression="SET current_task = :t",
-                                             ExpressionAttributeValues={":t": mv["task_id"]})
         tree_runner.start(task, fid, tree)
     if started and m:
         _report(m)
     return len(started)
+
+
+def _requeue(m: dict, task_id: str) -> dict | None:
+    for mv in m["moves"]:
+        if mv["task_id"] == task_id and mv["state"] == "running":
+            mv.update(state="pending", task_id=None, forklift=None)
+            return m
+    return None
 
 
 # ---------------------------------------------------------------- lifecycle
@@ -225,9 +248,12 @@ def on_task_finished(task: dict, success: bool) -> None:
 
 
 def poke() -> None:
-    """Any forklift became free (e.g. finished a make-way move): try to hand out more moves."""
+    """Any forklift became free or checked in idle: try to hand out more moves."""
     active = current_id()
-    if active:
+    if not active:
+        return
+    m = get(active)
+    if m.get("status") == "running" and any(mv["state"] == "pending" for mv in m.get("moves", [])):
         dispatch_next(active)
 
 
