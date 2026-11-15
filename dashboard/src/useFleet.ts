@@ -18,6 +18,7 @@ export function useFleet(cfg: Config) {
   const [log, setLog] = useState<LogEntry[]>([])
   const [stops, setStops] = useState(0)
   const [locks, setLocks] = useState<Record<string, string>>({})
+  const [labTick, setLabTick] = useState(0)  // bumps when shadow/outcome/promotion data changes
   const [conn, setConn] = useState<Conn>('connecting')
   const [error, setError] = useState<string>()
   const client = useRef<MqttClient | null>(null)
@@ -108,6 +109,23 @@ export function useFleet(cfg: Config) {
         }
       }
     }
+    if (p[0] === 'tasks' && p[2] === 'shadow') {
+      const r = msg as { planner_version: string; sim_cost: number; prod_sim_cost: number; win: boolean; valid: boolean }
+      addLog(r.win ? 'ok' : 'info', `Shadow ${r.planner_version}: ${r.valid ? r.sim_cost : 'invalid plan'} vs prod ${r.prod_sim_cost}${r.win ? ' (candidate wins)' : ''}`)
+      setLabTick((n) => n + 1)
+      return
+    }
+    if (p[0] === 'tasks' && p[2] === 'outcome') {
+      const o = msg as { success: boolean; cost: number; duration_s: number }
+      addLog(o.success ? 'ok' : 'error', `Episode graded: cost ${o.cost}, ${o.duration_s}s`)
+      setLabTick((n) => n + 1)
+      return
+    }
+    if (topic === 'planners/promoted') {
+      addLog('ok', `Planner ${msg.version} promoted to production (was ${msg.previous ?? 'none'})`)
+      setLabTick((n) => n + 1)
+      return
+    }
     if (topic === 'warehouse/locks') {
       setLocks((msg as { locks: Record<string, string> }).locks ?? {})
       return
@@ -159,7 +177,7 @@ export function useFleet(cfg: Config) {
           setConn('live')
           setError(undefined)
           addLog('ok', 'Connected to fleet network')
-          c.subscribe(['fleet/+/pose', 'fleet/+/telemetry', 'fleet/+/event', 'fleet/+/path', 'fleet/+/stop', 'tasks/+/status', 'warehouse/locks'])
+          c.subscribe(['fleet/+/pose', 'fleet/+/telemetry', 'fleet/+/event', 'fleet/+/path', 'fleet/+/stop', 'tasks/+/status', 'tasks/+/shadow', 'tasks/+/outcome', 'warehouse/locks', 'planners/promoted'])
         })
         c.on('message', onMessage)
         c.on('error', (e) => setError(`MQTT: ${e.message}`))
@@ -196,7 +214,7 @@ export function useFleet(cfg: Config) {
   const publish = (topic: string, payload: object) => client.current?.publish(topic, JSON.stringify(payload), { qos: 1 })
 
   return {
-    graph, forklifts, trails, tasks, pallets, locks, log, stops, conn, error,
+    graph, forklifts, trails, tasks, pallets, locks, log, stops, conn, error, labTick,
     goto: (forkliftId: string, node: string) => {
       addLog('info', `Dispatch to ${node}`, forkliftId)
       publish(`fleet/${forkliftId}/goto`, { node })

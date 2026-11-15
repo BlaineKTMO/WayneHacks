@@ -105,6 +105,7 @@ class FleetStack(Stack):
                 self.format_arn(service="iot", resource="topic", resource_name="fleet/*"),
                 self.format_arn(service="iot", resource="topic", resource_name="tasks/*"),
                 self.format_arn(service="iot", resource="topic", resource_name="warehouse/*"),
+                self.format_arn(service="iot", resource="topic", resource_name="planners/*"),
             ],
         )
 
@@ -144,8 +145,9 @@ class FleetStack(Stack):
         ))
 
         api = fn("Api", "api.handler")
-        for t in (forklifts, tasks, pallets, edge_locks, planners):
+        for t in (forklifts, tasks, pallets, edge_locks):
             t.grant_read_data(api)
+        planners.grant_read_write_data(api)  # promote
         api.add_to_role_policy(publish_policy)
         Dashboard(self, "Dashboard", api_fn=api)
 

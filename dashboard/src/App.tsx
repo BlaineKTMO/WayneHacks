@@ -3,6 +3,7 @@ import '@aws-amplify/ui-react/styles.css'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Config } from './config'
 import type { Forklift, LogEntry, Task } from './types'
+import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
@@ -55,10 +56,10 @@ function Logo() {
 export type Fleet = ReturnType<typeof useFleet>
 
 function Console({ cfg, email, signOut }: { cfg: Config; email?: string; signOut?: () => void }) {
-  return <ConsoleView fleet={useFleet(cfg)} email={email} signOut={signOut} />
+  return <ConsoleView fleet={useFleet(cfg)} email={email} signOut={signOut} cfg={cfg} />
 }
 
-export function ConsoleView({ fleet, email, signOut }: { fleet: Fleet; email?: string; signOut?: () => void }) {
+export function ConsoleView({ fleet, email, signOut, cfg }: { fleet: Fleet; email?: string; signOut?: () => void; cfg?: Config }) {
   const ids = Object.keys(fleet.forklifts).sort()
   const [selected, setSelected] = useState<string>()
   const [text, setText] = useState('')
@@ -164,6 +165,13 @@ export function ConsoleView({ fleet, email, signOut }: { fleet: Fleet; email?: s
                                          selected={id === selected} onSelect={() => setSelected(id)} onStop={() => fleet.stop(id)} />)}
             </div>
           </section>
+
+          {cfg && (
+            <section className="panel">
+              <div className="panel-head"><h2>Planner lab</h2><span className="badge-ai">self-improving</span></div>
+              <PlannerLab cfg={cfg} refreshKey={fleet.labTick} />
+            </section>
+          )}
 
           <section className="panel grow">
             <div className="panel-head"><h2>Task queue</h2><span className="count">{fleet.tasks.length}</span></div>

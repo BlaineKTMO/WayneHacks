@@ -182,6 +182,8 @@ def start_route(fid: str, goal: str, task_id: str, action: str | None = None) ->
             LOCKS.release(n, fid)
     LOCKS.acquire(start, fid, task_id)
     _mutate(fid, lambda _f: dict(CLEARED, route=route, route_task=task_id, route_action=action))
+    if not task_id.startswith("yield-"):  # don't let make-way moves cascade
+        make_way(fid, route)
     advance(fid)
     return True
 
@@ -242,9 +244,42 @@ def on_done(fid: str, node: str | None) -> None:
     publish_locks()
 
 
+def make_way(fid: str, route: list[str]) -> list[str]:
+    """Move idle forklifts parked anywhere on `route` (ahead of us) to the nearest spot off it.
+    Called when a route starts, so they move before we arrive (a dead-end dock can't be
+    cleared once we're standing at its only exit). Returns the ids asked to move."""
+    moved = []
+    held = LOCKS.held()
+    for node in route[1:]:
+        holder = held.get(node)
+        if not holder or holder == fid or holder in moved:
+            continue
+        other = _forklift(holder)
+        if other.get("route") or other.get("current_task"):
+            continue  # busy driving: traffic rules (wait / replan) handle it
+        taken = set(LOCKS.held()) | set(route)
+        spots = [n.id for n in GRAPH.nodes.values() if n.type in ("junction", "dock") and n.id not in taken]
+        best, best_d = None, float("inf")
+        for sp in spots:
+            r = _route_avoiding_others(node, sp, holder)
+            if r and GRAPH.path_length(r) < best_d:
+                best, best_d = sp, GRAPH.path_length(r)
+        if best:
+            log.info("%s is parked on %s's route at %s; moving it to %s", holder, fid, node, best)
+            try:
+                start_route(holder, best, f"yield-{fid}")
+                moved.append(holder)
+            except ValueError as e:  # unknown position / no route: leave it, normal waiting applies
+                log.warning("could not move %s: %s", holder, e)
+    return moved
+
+
 def on_blocked(fid: str) -> str | None:
     """Forklift is waiting at the end of its window. Returns an error string if we gave up."""
     advance(fid)
+    f = _forklift(fid)
+    if f.get("route") and f.get("blocked_since"):
+        make_way(fid, f["route"])  # backup: someone parked on our route after we started
     result: dict = {}
 
     def fn(f):

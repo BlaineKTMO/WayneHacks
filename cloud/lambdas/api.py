@@ -6,6 +6,7 @@ Routes are documented in docs/API.md section 9.
 import json
 import logging
 import os
+import time
 
 import boto3
 
@@ -49,6 +50,54 @@ def attach_iot(event):
     return {"identity_id": identity_id}
 
 
+def planner_summaries() -> list:
+    out = []
+    for p in scan("PLANNERS_TABLE"):
+        runs = int(p.get("shadow_runs", 0))
+        out.append({"version": p["version"], "stage": p.get("stage"), "model_id": p.get("model_id"),
+                    "description": p.get("description"), "shadow_runs": runs,
+                    "shadow_wins": int(p.get("shadow_wins", 0)),
+                    "avg_sim_cost": round(float(p.get("shadow_cost_sum", 0)) / runs, 3) if runs else None,
+                    "promoted_at": p.get("promoted_at")})
+    order = {"prod": 0, "shadow": 1, "retired": 2}
+    return sorted(out, key=lambda p: (order.get(p["stage"], 3), p["version"]))
+
+
+def compare(limit: int) -> list:
+    tasks = sorted((t for t in scan("TASKS_TABLE") if t.get("sim")), key=lambda t: t.get("created_at", 0), reverse=True)
+    rows = []
+    for t in tasks[:limit]:
+        rows.append({"task_id": t["task_id"], "text": t.get("text"), "status": t.get("status"),
+                     "prod": {"version": t.get("planner_version"), "sim_cost": t["sim"].get("cost")},
+                     "candidates": [{k: c.get(k) for k in ("planner_version", "sim_cost", "valid", "win", "error")}
+                                    for c in t.get("shadow") or []]})
+    return rows
+
+
+def promote(version: str):
+    planners = {p["version"]: p for p in scan("PLANNERS_TABLE")}
+    if version not in planners:
+        return err(404, "not_found", f"no planner {version}")
+    if planners[version].get("stage") != "shadow":
+        return err(409, "conflict", f"{version} is {planners[version].get('stage')}, only shadow planners can be promoted")
+    prev = next((v for v, p in planners.items() if p.get("stage") == "prod"), None)
+    now = int(time.time() * 1000)
+    name = os.environ["PLANNERS_TABLE"]
+    items = [{"Update": {"TableName": name, "Key": {"version": {"S": version}},
+                         "UpdateExpression": "SET stage = :p, promoted_at = :t",
+                         "ConditionExpression": "stage = :s",
+                         "ExpressionAttributeValues": {":p": {"S": "prod"}, ":s": {"S": "shadow"}, ":t": {"N": str(now)}}}}]
+    if prev:
+        # The old prod becomes a shadow again (kept for rollback and further comparison).
+        items.append({"Update": {"TableName": name, "Key": {"version": {"S": prev}},
+                                 "UpdateExpression": "SET stage = :sh REMOVE shadow_runs, shadow_wins, shadow_cost_sum",
+                                 "ConditionExpression": "stage = :p",
+                                 "ExpressionAttributeValues": {":sh": {"S": "shadow"}, ":p": {"S": "prod"}}}})
+    boto3.client("dynamodb").transact_write_items(TransactItems=items)
+    publish("planners/promoted", {"version": version, "previous": prev, "ts": now})
+    return ok({"version": version, "previous": prev})
+
+
 def handler(event, _ctx):
     route = event["routeKey"]
     params = event.get("pathParameters") or {}
@@ -72,6 +121,12 @@ def handler(event, _ctx):
             fid = params["forklift_id"]
             publish(topics.stop(fid), Stop(reason="operator").to_dict())
             return ok({"forklift_id": fid, "stopped": True}, 202)
+        if route == "GET /planners":
+            return ok(planner_summaries())
+        if route == "GET /planners/compare":
+            return ok(compare(min(int(qs.get("limit", 20)), 50)))
+        if route == "POST /planners/{version}/promote":
+            return promote(params["version"])
         if route == "POST /iot/attach":
             return ok(attach_iot(event))
         return err(404, "not_found", route)

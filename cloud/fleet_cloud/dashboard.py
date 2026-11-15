@@ -69,9 +69,11 @@ class Dashboard(Construct):
         iot_statements = [
             {"Effect": "Allow", "Action": "iot:Connect", "Resource": arn("client", "dash-*")},
             {"Effect": "Allow", "Action": "iot:Subscribe",
-             "Resource": [arn("topicfilter", "fleet/*"), arn("topicfilter", "warehouse/*"), arn("topicfilter", "tasks/*")]},
+             "Resource": [arn("topicfilter", "fleet/*"), arn("topicfilter", "warehouse/*"), arn("topicfilter", "tasks/*"),
+                          arn("topicfilter", "planners/*")]},
             {"Effect": "Allow", "Action": "iot:Receive",
-             "Resource": [arn("topic", "fleet/*"), arn("topic", "warehouse/*"), arn("topic", "tasks/*")]},
+             "Resource": [arn("topic", "fleet/*"), arn("topic", "warehouse/*"), arn("topic", "tasks/*"),
+                          arn("topic", "planners/*")]},
             {"Effect": "Allow", "Action": "iot:Publish",
              "Resource": [arn("topic", "tasks/new"), arn("topic", "fleet/*/goto")]},
         ]
@@ -111,6 +113,9 @@ class Dashboard(Construct):
             (apigw.HttpMethod.GET, "/tasks/{task_id}"),
             (apigw.HttpMethod.POST, "/forklifts/{forklift_id}/stop"),
             (apigw.HttpMethod.POST, "/iot/attach"),
+            (apigw.HttpMethod.GET, "/planners"),
+            (apigw.HttpMethod.GET, "/planners/compare"),
+            (apigw.HttpMethod.POST, "/planners/{version}/promote"),
         ]:
             http.add_routes(path=path, methods=[method],
                             integration=integrations.HttpLambdaIntegration(f"R{method.value}{path}", api_fn))

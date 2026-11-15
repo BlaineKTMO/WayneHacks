@@ -88,3 +88,23 @@ def test_concurrent_route_updates_are_not_lost(monkeypatch):
     traffic.on_node_reached("fl-01", "j3")                    # first attempt uses the stale read -> conflict -> retry
     assert tables["FORKLIFTS_TABLE"].items["fl-01"]["route"][0] == "j3"
     assert "j1" not in locks.held() and "dock_A" not in locks.held()
+
+
+def test_idle_forklift_makes_way(monkeypatch):
+    tables, locks, sent = install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_A"},
+                                                {"forklift_id": "fl-02", "node": "dock_B"}])
+    locks.acquire("dock_B", "fl-02")              # fl-02 parked on our destination, idle
+    traffic.start_route("fl-01", "dock_B", "t1")
+    route = tables["FORKLIFTS_TABLE"].items["fl-01"]["route"]
+    moved = tables["FORKLIFTS_TABLE"].items["fl-02"].get("route")
+    assert moved and moved[0] == "dock_B" and moved[-1] not in route   # moved off our way, before we arrive
+    assert tables["FORKLIFTS_TABLE"].items["fl-02"]["route_task"] == "yield-fl-01"
+
+
+def test_busy_forklift_is_not_moved(monkeypatch):
+    tables, locks, _ = install(monkeypatch, [{"forklift_id": "fl-01", "node": "j2"},
+                                             {"forklift_id": "fl-02", "node": "dock_B", "current_task": "t9"}])
+    locks.acquire("dock_B", "fl-02")
+    traffic.start_route("fl-01", "dock_B", "t1")
+    traffic.on_blocked("fl-01")
+    assert "route" not in tables["FORKLIFTS_TABLE"].items["fl-02"]
