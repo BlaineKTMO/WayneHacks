@@ -2,7 +2,8 @@
 
   uv run python -m fleet_edge.step2_calibrate
 
-Print a chessboard with 9x6 INNER corners (10x7 squares), tape it flat to cardboard.
+Use a chessboard with CHESSBOARD_INNER inner corners (config.py; squares - 1 each way),
+taped flat to cardboard. Hands-free alternative: python -m fleet_edge.calib_auto
 Hold it in front of the camera at many angles and distances. Press SPACE to capture when
 the corners are drawn in colour. Capture ~15 views, then press c to compute and save.
 A reprojection error under 0.5 pixels is good; under 1.0 is fine.
@@ -14,14 +15,13 @@ import cv2
 import numpy as np
 
 from . import config
+from .localizer import open_camera
 
-PATTERN = (9, 6)
+PATTERN = config.CHESSBOARD_INNER
 
 
 def main():
-    cap = cv2.VideoCapture(config.CAMERA_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+    cap = open_camera()
     objp = np.zeros((PATTERN[0] * PATTERN[1], 3), np.float32)
     objp[:, :2] = np.mgrid[0:PATTERN[0], 0:PATTERN[1]].T.reshape(-1, 2)
     obj_pts, img_pts, size = [], [], None

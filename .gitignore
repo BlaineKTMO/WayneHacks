@@ -16,3 +16,7 @@ edge/certs/
 # Recorded data
 edge/logs/
 *.mp4
+
+# Calibration scratch (camera.npz itself is kept: it belongs to this camera)
+edge/calibration/views.npz
+edge/calibration/coverage.jpg

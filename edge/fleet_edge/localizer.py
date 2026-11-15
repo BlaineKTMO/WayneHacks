@@ -35,15 +35,31 @@ class ForkliftPose:
     t: float                     # time.monotonic() when seen
 
 
+def open_camera(index: int = config.CAMERA_INDEX) -> cv2.VideoCapture:
+    """Open the webcam at CAMERA_WIDTH x CAMERA_HEIGHT.
+
+    Asks for MJPG first: most USB webcams (the eMeet C950 included) only offer HD
+    sizes as MJPG, and without this OpenCV silently falls back to 640x480."""
+    cap = cv2.VideoCapture(index, cv2.CAP_V4L2) if hasattr(cv2, "CAP_V4L2") else cv2.VideoCapture(index)
+    if not cap.isOpened():
+        cap = cv2.VideoCapture(index)
+    if not cap.isOpened():
+        raise RuntimeError(f"cannot open camera {index}: wrong CAMERA_INDEX in config.py, "
+                           "or another program (a preview window, ffplay, a video call) is using it")
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if (w, h) != (config.CAMERA_WIDTH, config.CAMERA_HEIGHT):
+        print(f"[camera] asked for {config.CAMERA_WIDTH}x{config.CAMERA_HEIGHT}, got {w}x{h}")
+    return cap
+
+
 class Camera:
     """Webcam with optional undistortion from step2_calibrate."""
 
     def __init__(self, index: int = config.CAMERA_INDEX):
-        self.cap = cv2.VideoCapture(index)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"cannot open camera {index}; try CAMERA_INDEX = 1 in config.py")
+        self.cap = open_camera(index)
         self.K = self.dist = None
         calib = Path(config.CALIBRATION_FILE)
         if calib.exists():
