@@ -41,6 +41,9 @@ class FakeLocks:
         self.locks[node] = fid
         return True
 
+    def extend(self, node, fid):
+        pass  # only touches expiry; never creates a lock
+
     def release(self, node, fid):
         if self.locks.get(node) == fid:
             del self.locks[node]

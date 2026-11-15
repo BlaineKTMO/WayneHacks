@@ -59,6 +59,17 @@ class Locks:
                 return False
             raise
 
+    def extend(self, node: str, fid: str) -> None:
+        """Push back the expiry of a lock we still hold. Never recreates a released lock
+        (a plain re-put here raced with node_reached releases and resurrected old locks)."""
+        try:
+            self._t().update_item(Key={"edge_id": node}, UpdateExpression="SET expires_at = :e",
+                                  ConditionExpression="holder = :me",
+                                  ExpressionAttributeValues={":me": fid, ":e": int(time.time()) + LOCK_TTL_S})
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+
     def release(self, node: str, fid: str) -> None:
         try:
             self._t().delete_item(Key={"edge_id": node}, ConditionExpression="holder = :me",
@@ -132,6 +143,7 @@ def start_route(fid: str, goal: str, task_id: str, action: str | None = None) ->
     for n, h in LOCKS.held().items():
         if h == fid and n != start:
             LOCKS.release(n, fid)
+    LOCKS.acquire(start, fid, task_id)
     _set(fid, route=route, route_task=task_id, route_action=action, window_end=None,
          blocked_since=None, blocked_first=None)
     advance(fid)
@@ -145,8 +157,7 @@ def advance(fid: str) -> None:
     if not route:
         return
     task_id = f.get("route_task") or "-"
-    LOCKS.acquire(route[0], fid, task_id)
-    k = 1
+    k = 1  # route[0] (where we are) was locked by start_route / the previous window
     while k < len(route) and k <= LOOKAHEAD and LOCKS.acquire(route[k], fid, task_id):
         k += 1
     window = route[:k]
@@ -214,12 +225,11 @@ def on_blocked(fid: str) -> str | None:
 
 def renew(fid: str, node: str | None) -> None:
     """Telemetry heartbeat: keep this forklift's locks (and its parking spot) alive."""
-    changed = False
     held = LOCKS.held()
     for n, h in held.items():
         if h == fid:
-            LOCKS.acquire(n, fid)
-    if node in GRAPH.nodes and held.get(node) != fid:
-        changed = LOCKS.acquire(node, fid)
-    if changed:
-        publish_locks()
+            LOCKS.extend(n, fid)
+    # Parked and not holding its own spot (e.g. after a restart): claim it.
+    if node in GRAPH.nodes and node not in held and not _forklift(fid).get("route"):
+        if LOCKS.acquire(node, fid):
+            publish_locks()

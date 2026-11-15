@@ -75,9 +75,9 @@ def on_task_event(fid: str, event_type: str, error: str | None = None) -> None:
     state = "done" if event_type == "done" else "failed"
     table("TASKS_TABLE").update_item(
         Key={"task_id": task_id},
-        UpdateExpression="SET #s = :s, finished_at = :t",
-        ExpressionAttributeNames={"#s": "status"},
-        ExpressionAttributeValues={":s": state, ":t": now_ms()},
+        UpdateExpression="SET #s = :s, finished_at = :t, #e = :e",
+        ExpressionAttributeNames={"#s": "status", "#e": "error"},
+        ExpressionAttributeValues={":s": state, ":t": now_ms(), ":e": error or "-"},
     )
     table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fid}, UpdateExpression="REMOVE current_task")
     publish(topics.task_status(task_id), TaskStatus(state=state, assigned_to=fid, text=task.get("text"),

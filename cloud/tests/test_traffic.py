@@ -65,3 +65,12 @@ def test_give_up_after_45s(monkeypatch):
     err = traffic.on_blocked("fl-01")
     assert err and "fl-02" in err
     assert "route" not in tables["FORKLIFTS_TABLE"].items["fl-01"]
+
+
+def test_renew_never_resurrects_released_locks(monkeypatch):
+    tables, locks, _ = install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_A"}])
+    traffic.start_route("fl-01", "slot_A4", "t1")
+    tables["FORKLIFTS_TABLE"].items["fl-01"]["node"] = "j1"
+    traffic.on_node_reached("fl-01", "j1")       # releases dock_A
+    traffic.renew("fl-01", "j1")                 # telemetry heartbeat
+    assert "dock_A" not in locks.held()
