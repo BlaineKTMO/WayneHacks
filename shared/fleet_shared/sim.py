@@ -9,7 +9,9 @@ Used for shadow scoring of candidate planners and for the sim-to-real check.
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+import json
+from dataclasses import asdict, dataclass, fields
+from pathlib import Path
 
 from .behavior_tree import validate
 from .graph import Graph, edge_id
@@ -21,6 +23,15 @@ class SimParams:
     pick_s: float = 1.5
     drop_s: float = 1.5
     node_overhead_s: float = 0.4  # slow-down / settle at each node
+
+    @classmethod
+    def load(cls) -> "SimParams":
+        """Calibrated values from mlops/calibrate.py (sim_params.json next to this file), else defaults."""
+        f = Path(__file__).with_name("sim_params.json")
+        if f.exists():
+            data = json.loads(f.read_text())
+            return cls(**{k.name: data[k.name] for k in fields(cls) if k.name in data})
+        return cls()
 
 
 @dataclass
@@ -46,7 +57,7 @@ def score(success: bool, distance_m: float, wait_s: float, replans: int = 0, sto
 
 
 def simulate(tree: dict, snapshot: dict, graph: Graph, params: SimParams | None = None) -> Outcome:
-    p = params or SimParams()
+    p = params or SimParams.load()
     fid, at = snapshot.get("forklift", "fl-??"), snapshot.get("start")
     pallets = dict(snapshot.get("pallets", {}))
     errors = validate(tree, graph, pallets, start_node=at, forklift_id=fid)
