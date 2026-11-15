@@ -123,7 +123,11 @@ class SimLink:
             return 0.0 if abs(cmd) < config.MIN_SPEED * 0.6 else cmd / 100 * self.top
         vl, vr = speed(self.left), speed(self.right)
         v, w = (vl + vr) / 2, (vr - vl) / config.WHEEL_BASE_M
+        # Like the real chassis, rotate about a point PIVOT_FWD_M ahead of the centre.
+        d = config.PIVOT_FWD_M
+        px, py = self.x + d * math.cos(self.theta), self.y + d * math.sin(self.theta)
         self.theta = (self.theta + w * dt + math.pi) % (2 * math.pi) - math.pi
+        self.x, self.y = px - d * math.cos(self.theta), py - d * math.sin(self.theta)
         self.x += v * math.cos(self.theta) * dt
         self.y += v * math.sin(self.theta) * dt
 

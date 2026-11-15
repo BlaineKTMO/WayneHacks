@@ -32,6 +32,7 @@ def main():
     ap.add_argument("--log", default="edge/logs/ring1.csv", help="pose log file")
     ap.add_argument("--auto", action="store_true", help="no window: start at once, quit when the laps are done")
     ap.add_argument("--max-seconds", type=float, default=90, help="--auto: give up and stop after this long")
+    ap.add_argument("--video", help="also record the overlay to this .mp4 (the backup video)")
     args = ap.parse_args()
 
     follower = WaypointFollower(config.WAYPOINTS, loop=True)
@@ -53,6 +54,7 @@ def main():
     log.writerow(["t", "x", "y", "theta", "left", "right", "wp", "lap", "tag_seen", "status"])
 
     running, last_seen, pose = args.auto, 0.0, None
+    video = None
     t_start = time.monotonic()
     period = 1 / config.COMMAND_RATE_HZ
     print("SPACE to start. q to quit.")
@@ -102,6 +104,8 @@ def main():
                     status = "BLOCKED: every move would take tag 13 out of view"
                 elif follower.mode == "border":
                     status = "BORDER: tag 13 drifted outside the border"
+                elif follower.mode == "drift_stop":
+                    status = "DRIFT_STOP: spins keep sliding instead of turning on the spot"
             tele = link.poll()
             if tele:
                 status += f"   [{tele.state} {tele.battery_v:.1f}V]"
@@ -110,8 +114,16 @@ def main():
                 log.writerow([round(t0, 3), round(pose.x, 4), round(pose.y, 4), round(pose.theta, 4),
                               left, right, follower.index, follower.laps, int(fresh), status.split("  ")[0]])
 
+            if args.video:
+                view = draw(img, canvas, pose, follower, status, tag_ok)
+                if video is None:
+                    Path(args.video).parent.mkdir(parents=True, exist_ok=True)
+                    video = cv2.VideoWriter(args.video, cv2.VideoWriter_fourcc(*"mp4v"),
+                                            config.COMMAND_RATE_HZ, (view.shape[1], view.shape[0]))
+                video.write(view)
+
             if args.auto:
-                if (status.startswith(("DONE", "BLOCKED", "BORDER"))
+                if (status.startswith(("DONE", "BLOCKED", "BORDER", "DRIFT_STOP"))
                         or t0 - t_start > args.max_seconds):
                     link.stop("auto_end")
                     print(f"{status}  ({t0 - t_start:.0f} s)", flush=True)
@@ -133,6 +145,9 @@ def main():
             time.sleep(max(0.0, period - (time.monotonic() - t0)))
     finally:
         link.close()
+        if video is not None:
+            video.release()
+            print(f"saved video {args.video}")
         if camera:
             camera.close()
         if not args.auto:

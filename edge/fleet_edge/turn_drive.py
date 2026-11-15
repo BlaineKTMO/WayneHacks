@@ -21,6 +21,12 @@ first, and takes the first whose whole move keeps the tag inside. If none does, 
 doesn't move and reports mode "blocked". If the tag is ever found outside the border
 (drift), it stops ("border").
 
+Steering point: the chassis turns about a point PIVOT_FWD_M ahead of its centre (it is
+front-heavy), so that point, not the centre, is what's steered to the waypoints. A spin
+then really is "in place" for navigation: the bearing to the target doesn't move while
+it turns. Steering the centre instead made the centre swing past a nearby target during
+a re-aim and the follower chase it round by 135 deg (real run 8).
+
 Same interface as pure_pursuit.WaypointFollower (waypoints, index, laps, finished,
 target, update), so the runner and overlay don't care which one they get.
 """
@@ -96,7 +102,10 @@ class TurnDriveFollower:
         self.finished = False
         self.driving = False    # False = turning (or about to), True = on a straight leg
         self.plan = None        # (reverse, turn_dir) chosen for the current turn
-        self.mode = "turn"      # "turn", "forward", "reverse", "done", "blocked", "border"
+        self.spin_from = None   # where the current spin started (drift guard)
+        self.drifts = 0         # drift re-plans on the way to the current waypoint
+        self.moved = False      # any motion commanded yet (SKIP_NEAR_M only applies before)
+        self.mode = "turn"      # "turn", "forward", "reverse", "done", "blocked", "border", "drift", "drift_stop"
 
     @property
     def target(self) -> tuple[float, float]:
@@ -116,13 +125,18 @@ class TurnDriveFollower:
             return True
         if not self.spin_is_safe(x, y, theta, delta):
             return False
-        sx, sy, _ = spin_pose(x, y, theta, delta)
-        heading = math.atan2(ty - sy, tx - sx) + (math.pi if reverse else 0.0)
-        return inside(self.border, tag_at(tx, ty, heading))
+        px, py = body_to_world(x, y, theta, config.PIVOT_FWD_M, 0.0)   # unmoved by the spin
+        heading = math.atan2(ty - py, tx - px) + (math.pi if reverse else 0.0)
+        # The leg ends with the PIVOT on the target, so the centre sits behind it.
+        cx = tx - config.PIVOT_FWD_M * math.cos(heading)
+        cy = ty - config.PIVOT_FWD_M * math.sin(heading)
+        return inside(self.border, tag_at(cx, cy, heading))
 
     def choose_plan(self, x, y, theta, tx, ty):
-        """Least-turning (reverse, turn_dir) that keeps the tag inside, or None."""
-        bearing = math.atan2(ty - y, tx - x)
+        """Least-turning (reverse, turn_dir) that keeps the tag inside, or None.
+        (x, y, theta) is the chassis CENTRE; the bearing is taken from the pivot."""
+        px, py = body_to_world(x, y, theta, config.PIVOT_FWD_M, 0.0)
+        bearing = math.atan2(ty - py, tx - px)
         options = []
         for reverse in ([False, True] if config.ALLOW_REVERSE else [False]):
             err = wrap(bearing + (math.pi if reverse else 0.0) - theta)
@@ -131,6 +145,8 @@ class TurnDriveFollower:
                 long_way = err - math.copysign(2 * math.pi, err)
                 options.append((abs(long_way), reverse, long_way))
         for _, reverse, delta in sorted(options, key=lambda o: o[0]):
+            if config.SPIN_LEFT_ONLY and delta < -config.ALIGN_TOL_RAD:
+                continue        # clockwise spins slide on this chassis; take the long way left
             if self.move_is_safe(x, y, theta, delta, reverse, tx, ty):
                 return reverse, (1 if delta >= 0 else -1)
         return None
@@ -138,20 +154,32 @@ class TurnDriveFollower:
     # ------------------------------------------------------------- control
     def update(self, x: float, y: float, theta: float) -> tuple[int, int]:
         """One control step. Returns (left, right)."""
+        cmd = self._update(x, y, theta)
+        if cmd != (0, 0):
+            self.moved = True
+        return cmd
+
+    def _update(self, x: float, y: float, theta: float) -> tuple[int, int]:
         if self.finished:
-            self.mode = "done"
+            if self.mode != "drift_stop":
+                self.mode = "done"
             return 0, 0
         if not inside(self.border, tag_at(x, y, theta)):
             self.mode, self.driving, self.plan = "border", False, None
             return 0, 0
+        cx, cy = x, y                                    # chassis centre (for the border)
+        x, y = body_to_world(cx, cy, theta, config.PIVOT_FWD_M, 0.0)   # steer the pivot
         tx, ty = self.target
         dist = math.hypot(tx - x, ty - y)
-        # Also skip a waypoint we're already near before setting off: spinning up to 90 deg
-        # to travel a few cm swings the front-mounted tag around for nothing.
-        close_enough = not self.driving and dist < config.SKIP_NEAR_M
+        # Skip a waypoint we're already standing near at the very start: spinning up to
+        # 90 deg to travel a few cm swings the front-mounted tag around for nothing. Only
+        # before the first move: mid-run, a re-aim near a waypoint must still reach it
+        # (run 7 turned back 38 mm short because this applied there too).
+        close_enough = not self.moved and dist < config.SKIP_NEAR_M
         if dist < config.ARRIVE_RADIUS_M or close_enough or self._drew_level(x, y, theta, tx, ty):
             self._advance()
             self.driving, self.plan = False, None     # always re-plan for a new waypoint
+            self.drifts = 0
             if self.finished:
                 self.mode = "done"
                 return 0, 0
@@ -162,22 +190,37 @@ class TurnDriveFollower:
             reverse = self.mode == "reverse"
             err = wrap(math.atan2(ty - y, tx - x) + (math.pi if reverse else 0.0) - theta)
             # Drifted too far on a straight leg: stop and re-plan the turn. Not in the last
-            # SLOWDOWN_M: up close a 1-2 cm sideways miss looks like a big angle.
-            if abs(err) > config.REALIGN_RAD and dist >= config.SLOWDOWN_M:
+            # NO_REALIGN_M: up close a 2-3 cm sideways miss looks like a big angle, and the
+            # leg finishes fine without it (_drew_level accepts ARRIVE_SIDE_M sideways).
+            if abs(err) > config.REALIGN_RAD and dist >= config.NO_REALIGN_M:
                 self.driving, self.plan = False, None
             else:
                 return self._straight(dist, reverse)
 
+        # Spin drift guard: a spin should leave the turning point where it was. If it has
+        # slid SPIN_DRIFT_M (a wheel slipping, a tugged cable), stop and re-plan from where
+        # it really is, so the border check runs again. Real loop 2 slid 35 cm in one spin.
+        if self.plan is not None and self.spin_from is not None and \
+                math.hypot(x - self.spin_from[0], y - self.spin_from[1]) > config.SPIN_DRIFT_M:
+            self.plan, self.spin_from = None, None
+            self.drifts += 1
+            # Re-planning keeps spinning the same way, so a chassis that slides keeps
+            # creeping (real loop 5: 15 cm toward the pole). Give up after MAX_DRIFTS.
+            self.mode = "drift_stop" if self.drifts > config.MAX_DRIFTS else "drift"
+            if self.mode == "drift_stop":
+                self.finished = True
+            return 0, 0
         # Turning: pick (once per turn) which way to face and which way to spin.
         if self.plan is None:
-            self.plan = self.choose_plan(x, y, theta, tx, ty)
+            self.spin_from = (x, y)
+            self.plan = self.choose_plan(cx, cy, theta, tx, ty)
             if self.plan is None:
                 self.mode = "blocked"
                 return 0, 0
         reverse, turn_dir = self.plan
         err = wrap(math.atan2(ty - y, tx - x) + (math.pi if reverse else 0.0) - theta)
         if abs(err) <= config.ALIGN_TOL_RAD:
-            self.driving, self.plan = True, None
+            self.driving, self.plan, self.spin_from = True, None, None
             self.mode = "reverse" if reverse else "forward"
             return self._straight(dist, reverse)
         # Remaining angle the chosen way round; slow down as it lines up so the camera

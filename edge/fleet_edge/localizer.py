@@ -109,17 +109,21 @@ class Localizer:
 
     Corner tags lie on the table, but the forklift's tag rides FORKLIFT_TAG_HEIGHT_M above
     it. A camera sees a raised tag from an angle, so mapping it as if it were on the table
-    puts it too far from the point under the camera (65 mm off at 27 cm height on our
-    rig). With a lens calibration (K), the camera's position is solved from the four
-    corner tags and each forklift tag's line of sight is intersected with the plane at
-    its real height. Without one, it falls back to the flat table mapping.
+    puts it too far from the point under the camera. With a lens calibration (K), the
+    camera's position is found from how big each corner tag looks (distance = focal
+    length x tag size / apparent size; four distances fix the position), and the raised
+    tag is pulled toward the camera by similar triangles.
+
+    Not solvePnP on the four corner-tag centres: with four coplanar points it has two
+    near-equal answers and flipped between them frame to frame here ((414, 23, 645) vs
+    (120, 289, 676) mm), which moved a 271 mm-high tag by up to ~17 cm. The size method
+    gave (258, 135, 616) mm with 2.6 mm residuals, matching four equal-looking corner tags.
     """
 
     def __init__(self, K: np.ndarray | None = None):
         self.K = K                              # camera matrix of the UNDISTORTED image
         self.H: np.ndarray | None = None       # pixels -> metres, table plane
-        self.R: np.ndarray | None = None       # camera pose from the corner tags (world -> camera)
-        self.cam_pos: np.ndarray | None = None  # camera centre in world metres
+        self.cam_pos: np.ndarray | None = None  # camera centre in world metres (z = height)
         self.filtered: dict[str, ForkliftPose] = {}
         self._saved_at = 0.0
         self._load_map()
@@ -135,19 +139,31 @@ class Localizer:
         world = np.array([config.CORNER_TAGS[i] for i in sorted(seen)], dtype=np.float64)
         self.H, _ = cv2.findHomography(px, world)
         if self.K is not None:
-            obj = np.hstack([world, np.zeros((len(world), 1))])
-            ok, rvec, tvec = cv2.solvePnP(obj, px, self.K, None, flags=cv2.SOLVEPNP_IPPE)
-            if ok:
-                self.R, _ = cv2.Rodrigues(rvec)
-                self.cam_pos = (-self.R.T @ tvec).ravel()
+            c = self._camera_from_tag_sizes([seen[i] for i in sorted(seen)], world)
+            if c is not None:   # smooth: one frame's tag sizes are a little noisy
+                self.cam_pos = c if self.cam_pos is None else 0.9 * self.cam_pos + 0.1 * c
         if time.monotonic() - self._saved_at > 10:
             self._save_map()
         return True
 
+    def _camera_from_tag_sizes(self, tags, world) -> np.ndarray | None:
+        """Camera centre (world metres) from the corner tags' apparent sizes."""
+        f = (self.K[0, 0] + self.K[1, 1]) / 2
+        sides = np.array([np.mean([np.linalg.norm(np.subtract(t.corners_px[i], t.corners_px[(i + 1) % 4]))
+                                   for i in range(4)]) for t in tags])
+        d = f * config.TAG_SIZE_M / sides
+        P = np.hstack([world, np.zeros((len(world), 1))])
+        C = np.array([P[:, 0].mean(), P[:, 1].mean(), d.mean()])   # start above the middle
+        for _ in range(30):     # Gauss-Newton on |P - C| = d
+            v = C - P
+            r = np.linalg.norm(v, axis=1)
+            C = C - np.linalg.lstsq(v / r[:, None], r - d, rcond=None)[0]
+        return C if np.isfinite(C).all() and C[2] > 0.1 else None
+
     def _save_map(self) -> None:
         try:
             Path(config.TABLE_MAP_FILE).parent.mkdir(parents=True, exist_ok=True)
-            extra = {} if self.R is None else {"R": self.R, "cam_pos": self.cam_pos}
+            extra = {} if self.cam_pos is None else {"cam_from_sizes": self.cam_pos}
             np.savez(config.TABLE_MAP_FILE, H=self.H,
                      corners=np.array(sorted(config.CORNER_TAGS.items()), dtype=object), **extra)
             self._saved_at = time.monotonic()
@@ -163,22 +179,20 @@ class Localizer:
             print("[localizer] saved table map is for different CORNER_TAGS; ignoring it")
             return
         self.H = d["H"]
-        if self.K is not None and "R" in d:
-            self.R, self.cam_pos = d["R"], d["cam_pos"]
+        if self.K is not None and "cam_from_sizes" in d:   # older maps' PnP camera was unreliable
+            self.cam_pos = d["cam_from_sizes"]
         print(f"[localizer] loaded table map from {f} (refreshed whenever all 4 corner tags are visible)")
 
     def to_world(self, px: tuple[float, float], height: float = 0.0) -> tuple[float, float]:
         """Pixel -> world (x, y) on the plane `height` metres above the table."""
-        if height and self.cam_pos is not None:
-            ray = self.R.T @ np.linalg.solve(self.K, np.array([px[0], px[1], 1.0]))
-            # World z points either toward or away from the camera depending on the
-            # tag layout; "above the table" is always the camera's side.
-            z = height if self.cam_pos[2] > 0 else -height
-            s = (z - self.cam_pos[2]) / ray[2]
-            p = self.cam_pos + s * ray
-            return float(p[0]), float(p[1])
         p = self.H @ np.array([px[0], px[1], 1.0])
-        return float(p[0] / p[2]), float(p[1] / p[2])
+        x, y = p[0] / p[2], p[1] / p[2]          # where the line of sight meets the table
+        if height and self.cam_pos is not None:
+            # A point `height` up on that line is `height / camera height` of the way from
+            # the table hit back toward the camera (similar triangles).
+            k = height / self.cam_pos[2]
+            x, y = x + (self.cam_pos[0] - x) * k, y + (self.cam_pos[1] - y) * k
+        return float(x), float(y)
 
     def process(self, sightings: list[TagSighting]) -> dict[str, ForkliftPose]:
         """Returns the latest filtered pose for every forklift seen this frame."""

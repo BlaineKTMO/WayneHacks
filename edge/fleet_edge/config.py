@@ -39,9 +39,11 @@ CORNER_TAGS = {
 # Tag on each forklift's roof -> forklift ID used everywhere else.
 FORKLIFT_TAGS = {13: "fl-01"}
 HERO_FORKLIFT = "fl-01"       # the one Ring 1 drives
-# Height of the forklift's tag above the table (metres). Camera-measured 271 mm; check with
-# a ruler. Needed because a raised tag looks shifted away from the point under the camera.
-FORKLIFT_TAG_HEIGHT_M = 0.271
+# Height of the forklift's tag above the table (metres). Needed because a raised tag looks
+# shifted away from the point under the camera. Tag 13 moved from the fork mast (271 mm)
+# down onto the chassis deck: camera-measured 78 mm (from its apparent size). Lower =
+# the camera tracks a 2.3x bigger area, and spins swing the tag less.
+FORKLIFT_TAG_HEIGHT_M = 0.078
 
 # If the tag arrow points somewhere other than the forklift's front, fix it here (radians).
 # Our tag 13 is mounted turned 90 degrees: it read 176 deg with the fork facing +y (90 deg).
@@ -53,8 +55,11 @@ TAG_HEADING_OFFSET = -1.5708
 # from above. 0, 0 = the tag is straight above the chassis centre.
 # Tag 13 is over the front-right corner of the 235 x 108 mm chassis (rough).
 # Fine-tune: spin the forklift in place; with the right offsets the reported x, y barely moves.
-TAG_OFFSET_FORWARD_M = 0.1175
-TAG_OFFSET_LEFT_M = -0.054
+# Deck mount (Nov 15): the reported pose is the chassis's measured TURNING POINT, so spins
+# are in place. Spin tests put it 74-96 mm forward and 59-85 mm left of the tag, i.e. the
+# tag is 85 mm behind and 72 mm right of it.
+TAG_OFFSET_FORWARD_M = -0.085
+TAG_OFFSET_LEFT_M = -0.072
 
 # ---------------------------------------------------------------- Free-WiLi serial link
 # "auto" finds the Free-WiLi OG main CPU by its USB name. Or set a path by hand
@@ -69,7 +74,7 @@ MAX_SPEED = 45                # wheel command, 0..100. 60 blurred the raised tag
 # Right side is stronger: "straight" drives curved left ~16 deg/s at 50. Straight legs send
 # right = left * RIGHT_TRIM (spins untouched). Tune with drive_lab: , and . keys, then i/k.
 RIGHT_TRIM = 0.85
-MIN_SPEED = 25                # below this the motors stall (deadband). Measure in step4.
+MIN_SPEED = 30                # deadband, measured on the table: 25 doesn't move at all, 30 moves 58 mm in 0.6 s
 LOOKAHEAD_M = 0.08            # pure pursuit look-ahead. Bigger = smoother, cuts corners more.
 ARRIVE_RADIUS_M = 0.03        # "reached the waypoint" distance
 WHEEL_BASE_M = 0.10           # left-to-right wheel distance (chassis is 108 mm wide; measure wheel centres)
@@ -81,19 +86,27 @@ TURN_IN_PLACE_RAD = 1.2       # if target is more than this far off-heading, spi
 ALIGN_TOL_RAD = 0.14          # ~8 deg: stop spinning and start driving once this close
 REALIGN_RAD = 0.35            # ~20 deg: drifted this far on a straight leg -> stop and re-spin
 TURN_SPEED = 50               # spin speed when far off-heading. Skid steer needs more push to turn.
-TURN_MIN_SPEED = 35           # spin speed when nearly lined up. Raise if it stalls mid-turn.
-SLOWDOWN_M = 0.08             # start easing off this far from the waypoint; no re-spins inside it
+TURN_MIN_SPEED = 35           # spin speed when nearly lined up. Spin deadband measured: 25 stalls, 30 turns
+SLOWDOWN_M = 0.08             # start easing off this far from the waypoint
+NO_REALIGN_M = 0.15           # no re-spins this close to a waypoint (a small sideways miss is fine)
 ARRIVE_SIDE_M = 0.05          # drawn level with the waypoint and this close sideways = reached
+SPIN_DRIFT_M = 0.04           # a spin that moves the turning point this far is stopped and re-planned
+MAX_DRIFTS = 2                # more drift re-plans than this on one leg -> stop for good (DRIFT_STOP)
+# Clockwise spins (right wheels reversing) slide sideways on this chassis instead of turning
+# on the spot (real loops 2-5); anticlockwise ones stay put. Turn left only: a 90 deg right
+# corner becomes 270 deg left. The full 360 deg sweep at each loop corner clears the pole.
+SPIN_LEFT_ONLY = True
 SKIP_NEAR_M = 0.08            # standing this close to the next waypoint (not yet driving) = reached
 # The chassis spins about a point this far ahead of its centre (front-heavy: fork mast +
 # battery). Measured with drive_lab: 98-145 mm over 7 spins; re-measure if weight moves.
-PIVOT_FWD_M = 0.11
+PIVOT_FWD_M = 0.0             # the pose IS the turning point now (see TAG_OFFSET_*)
 # Border: tag 13 must stay this many pixels inside the camera frame. The raised tag is
 # ~115 px across (58 px half-width), so 60 px keeps all of it in view, only just. Raise it
 # if the tag gets lost near the frame edge. Every move is checked against this before it
 # starts (turn_drive.py).
 TAG_BORDER_MARGIN_PX = 60
-ALLOW_REVERSE = True          # target behind -> back up to it instead of turning round
+ALLOW_REVERSE = False         # target behind -> back up instead of turning. Off for the loop: its
+                              # clearances were checked for forward driving only
 
 # ---------------------------------------------------------------- fork
 FORK_SPEED = 60               # fork motor command, 0..100. + = up.
@@ -106,9 +119,14 @@ FORK_LIFT_MS = 1500           # full lift / lower time for Pick/Drop. Measure it
 # (0.22, 0.38) m (re-measured after the tags moved), and its base plate makes it ~4 cm wide: keep the forklift's centre at
 # least ~17 cm from it (13 cm turning reach + base + margin). A full loop doesn't fit
 # beside it, so the route stays on the bottom lane.
-# The right end is 0.36, not 0.40: facing right there, tag 13 (front-right corner) would
-# sit outside the camera's view at its 271 mm height (the border, see below).
-WAYPOINTS = [(0.13, 0.13), (0.36, 0.13)]
+# Waypoints are where the chassis's turning point goes (the reported pose; see TAG_OFFSET_*).
+# Ring 1 loop: clockwise rectangle, driven forwards. The largest found by searching every
+# rectangle against the camera border at the tag's height, the pole and the corner tags
+# (worst case over every leg and corner turn, chassis ~28 x 17 cm incl. the fork tines):
+# tag >= 32 mm inside the border, chassis >= 66 mm from the pole's centre, >= 29 mm from
+# every corner tag. Re-run the search if the camera, tags or tag mount move.
+WAYPOINTS = [(0.12, 0.20), (0.42, 0.20), (0.42, 0.14), (0.12, 0.14)]
+# Earlier 2-point shuttle (with ALLOW_REVERSE): [(0.24, 0.13), (0.47, 0.13)]
 LAPS = 3
 
 # ---------------------------------------------------------------- pose filter
