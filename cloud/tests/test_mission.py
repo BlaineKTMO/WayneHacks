@@ -81,3 +81,24 @@ def test_mission_runs_to_completion(monkeypatch, mission_map):
     shipped = {p["pallet_id"]: p["node"] for p in tables["PALLETS_TABLE"].items.values()}
     assert all(shipped[mv["pallet"]] == f"shipped:{mv['dock']}" for mv in m["moves"])
     assert mission.summary(m)["per_dock"]["dock_1"]["shipped"] == 2
+
+
+def test_retry_of_a_carried_pallet_goes_to_the_same_forklift(monkeypatch, mission_map):
+    mission, traffic, tree_runner = mission_map
+    from fakes import FakeTable, install
+    now = mission.now_ms()
+    tables, locks, sent = install(monkeypatch, [
+        {"forklift_id": "fl-01", "node": "c1", "last_seen": now},
+        {"forklift_id": "fl-02", "node": "xA", "last_seen": now}],
+        [{"pallet_id": "pallet_7", "node": "on:fl-01"}])
+    tables["MISSIONS_TABLE"] = FakeTable("mission_id")
+    monkeypatch.setattr(mission, "table", lambda name: tables[name])
+    monkeypatch.setattr(mission, "publish", lambda t, p: sent.append((t, p)))
+    tables["MISSIONS_TABLE"].put_item({"mission_id": "m-1", "status": "running", "rev": 0, "moves": [
+        {"pallet": "pallet_7", "slot": "slot_C1", "dock": "dock_4", "state": "pending", "task_id": None,
+         "forklift": None, "attempts": 2}]})
+    assert mission.dispatch_next("m-1") == 1
+    mv = tables["MISSIONS_TABLE"].items["m-1"]["moves"][0]
+    assert mv["forklift"] == "fl-01"                                   # the one carrying it
+    steps = [s["type"] for s in tables["TASKS_TABLE"].items[mv["task_id"]]["tree"]["children"]]
+    assert steps == ["GoTo", "Drop"]                                   # no second Pick

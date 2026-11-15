@@ -136,6 +136,20 @@ def dispatch_next(mission_id: str) -> int:
         free = _free_forklifts()
         pending = [mv for mv in m["moves"] if mv["state"] == "pending"]
         changed = False
+        # A retried move whose pallet is already on a forklift's forks can only go to THAT forklift,
+        # and only needs the second half (drive to the dock, drop).
+        carried = {p["node"][3:]: p["pallet_id"] for p in from_ddb(table("PALLETS_TABLE").scan()["Items"])
+                   if str(p.get("node", "")).startswith("on:")}
+        for mv in [mv for mv in pending if mv["pallet"] in carried.values()]:
+            fid = next(f for f, pid in carried.items() if pid == mv["pallet"])
+            fl = next((f for f in free if f["forklift_id"] == fid), None)
+            pending.remove(mv)
+            if fl:
+                task_id = f"{mission_id}-{uuid.uuid4().hex[:4]}"
+                mv.update(state="running", task_id=task_id, forklift=fid, resume=True)
+                started.append((dict(mv), fid))
+                free.remove(fl)
+                changed = True
         while free and pending:
             # globally nearest (forklift, pallet) pair first
             fl, mv = min(((f, p) for f in free for p in pending), key=lambda fp: _dist(fp[0]["node"], fp[1]["slot"]))
@@ -149,9 +163,10 @@ def dispatch_next(mission_id: str) -> int:
 
     m = _mutate(mission_id, fn)
     for mv, fid in started:
-        tree = with_status({"type": "Sequence", "children": [
-            {"type": "GoTo", "node": mv["slot"]}, {"type": "Pick", "pallet": mv["pallet"]},
-            {"type": "GoTo", "node": mv["dock"]}, {"type": "Drop", "slot": mv["dock"]}]})
+        steps = [{"type": "GoTo", "node": mv["dock"]}, {"type": "Drop", "slot": mv["dock"]}]
+        if not mv.get("resume"):   # fresh move: fetch the pallet first
+            steps = [{"type": "GoTo", "node": mv["slot"]}, {"type": "Pick", "pallet": mv["pallet"]}] + steps
+        tree = with_status({"type": "Sequence", "children": steps})
         task = {"task_id": mv["task_id"], "text": f"{mv['pallet']}: {mv['slot']} -> {mv['dock']}", "status": "running",
                 "assigned_to": fid, "tree": tree, "planner_version": "mission", "mission_id": mission_id,
                 "created_at": now_ms(), "started_at": now_ms()}
@@ -194,7 +209,8 @@ def on_task_finished(task: dict, success: bool) -> None:
                     mv["state"] = "done"
                 elif mv.get("attempts", 1) < MAX_ATTEMPTS and m["status"] == "running":
                     # congestion timeout etc.: put it back in the queue for another forklift/time
-                    mv.update(state="pending", task_id=None, forklift=None, attempts=mv.get("attempts", 1) + 1)
+                    mv.update(state="pending", task_id=None, forklift=None, resume=False,
+                              attempts=mv.get("attempts", 1) + 1)
                 else:
                     mv["state"] = "failed"
                 if all(x["state"] in ("done", "failed") for x in m["moves"]) and m["status"] == "running":

@@ -1,5 +1,5 @@
 {
- "_comment": "MISSION demo map (simulated fleet): 3 aisles x 3 racking slots, 4 truck docks. Docks ship pallets (they leave the floor after a Drop). Switch with: uv run python cloud/scripts/use_map.py mission",
+ "_comment": "MISSION demo map (simulated fleet): 3 aisles x 3 racking slots, 4 truck docks. Aisle C rows connect straight to the dock lane so forklifts have several ways in and out. Docks ship pallets (they leave the floor after a Drop).",
  "size": {
   "width": 2.0,
   "height": 1.3
@@ -174,9 +174,33 @@
    "type": "slot"
   },
   {
-   "id": "d1",
+   "id": "d0",
    "x": 1.55,
    "y": 0.2,
+   "type": "junction"
+  },
+  {
+   "id": "d1",
+   "x": 1.55,
+   "y": 0.42,
+   "type": "junction"
+  },
+  {
+   "id": "d2",
+   "x": 1.55,
+   "y": 0.65,
+   "type": "junction"
+  },
+  {
+   "id": "d3",
+   "x": 1.55,
+   "y": 0.88,
+   "type": "junction"
+  },
+  {
+   "id": "d4",
+   "x": 1.55,
+   "y": 1.1,
    "type": "junction"
   },
   {
@@ -186,34 +210,16 @@
    "type": "dock"
   },
   {
-   "id": "d2",
-   "x": 1.55,
-   "y": 0.5,
-   "type": "junction"
-  },
-  {
    "id": "dock_2",
    "x": 1.85,
-   "y": 0.5,
+   "y": 0.42,
    "type": "dock"
-  },
-  {
-   "id": "d3",
-   "x": 1.55,
-   "y": 0.8,
-   "type": "junction"
   },
   {
    "id": "dock_3",
    "x": 1.85,
-   "y": 0.8,
+   "y": 0.88,
    "type": "dock"
-  },
-  {
-   "id": "d4",
-   "x": 1.55,
-   "y": 1.1,
-   "type": "junction"
   },
   {
    "id": "dock_4",
@@ -329,13 +335,8 @@
    "bidirectional": true
   },
   {
-   "from": "d1",
-   "to": "dock_1",
-   "bidirectional": true
-  },
-  {
-   "from": "d2",
-   "to": "dock_2",
+   "from": "d0",
+   "to": "d1",
    "bidirectional": true
   },
   {
@@ -344,23 +345,58 @@
    "bidirectional": true
   },
   {
-   "from": "d3",
-   "to": "dock_3",
-   "bidirectional": true
-  },
-  {
    "from": "d2",
    "to": "d3",
    "bidirectional": true
   },
   {
-   "from": "d4",
-   "to": "dock_4",
+   "from": "d3",
+   "to": "d4",
+   "bidirectional": true
+  },
+  {
+   "from": "xC",
+   "to": "d0",
+   "bidirectional": true
+  },
+  {
+   "from": "tC",
+   "to": "d4",
+   "bidirectional": true
+  },
+  {
+   "from": "c1",
+   "to": "d1",
+   "bidirectional": true
+  },
+  {
+   "from": "c2",
+   "to": "d2",
+   "bidirectional": true
+  },
+  {
+   "from": "c3",
+   "to": "d3",
+   "bidirectional": true
+  },
+  {
+   "from": "d0",
+   "to": "dock_1",
+   "bidirectional": true
+  },
+  {
+   "from": "d1",
+   "to": "dock_2",
    "bidirectional": true
   },
   {
    "from": "d3",
-   "to": "d4",
+   "to": "dock_3",
+   "bidirectional": true
+  },
+  {
+   "from": "d4",
+   "to": "dock_4",
    "bidirectional": true
   },
   {
@@ -374,11 +410,6 @@
    "bidirectional": true
   },
   {
-   "from": "xC",
-   "to": "d1",
-   "bidirectional": true
-  },
-  {
    "from": "tA",
    "to": "tB",
    "bidirectional": true
@@ -386,11 +417,6 @@
   {
    "from": "tB",
    "to": "tC",
-   "bidirectional": true
-  },
-  {
-   "from": "tC",
-   "to": "d4",
    "bidirectional": true
   }
  ],
