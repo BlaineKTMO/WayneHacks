@@ -134,6 +134,8 @@ export function WarehouseMap({ graph, forklifts, trails, pallets, selected, onNo
               {alert && <circle r={0.055} className="alert-ring" />}
               <g transform={`rotate(${deg})`} filter="url(#glow)">
                 <path d="M0.02 -0.03 L0.07 -0.03 M0.02 0.03 L0.07 0.03" className="forks" />
+                {Object.values(pallets).includes(`on:${f.id}`) &&
+                  <rect x={0.03} y={-0.026} width={0.045} height={0.052} rx={0.004} className="pallet" />}
                 <rect x={-0.04} y={-0.032} width={0.065} height={0.064} rx={0.012} fill={c} className="body" />
                 <rect x={-0.035} y={-0.022} width={0.025} height={0.044} rx={0.005} className="mast" />
                 <path d="M0.012 -0.012 L0.024 0 L0.012 0.012" className="chevron" />

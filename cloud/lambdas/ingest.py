@@ -5,6 +5,8 @@ The rule SQL adds `forklift_id` (from the topic) and `kind` ("telemetry" | "even
 
 import logging
 
+import tree_runner
+
 from common import publish, table, to_ddb
 from fleet_shared import topics
 from fleet_shared.messages import Event, Pose, TaskStatus, Telemetry, now_ms
@@ -34,9 +36,6 @@ def handler(msg, _ctx):
         updates |= {"last_event": parsed.type}
         if parsed.node:
             updates["node"] = parsed.node
-        if parsed.type == "done":
-            updates["current_task"] = None
-            # TODO(Ring 3): tick the behavior-tree runner for this forklift's task.
 
     names = {f"#{k}": k for k in updates}
     values = {f":{k}": v for k, v in to_ddb(updates).items()}
@@ -45,16 +44,29 @@ def handler(msg, _ctx):
         UpdateExpression="SET " + ", ".join(f"#{k} = :{k}" for k in updates),
         ExpressionAttributeNames=names,
         ExpressionAttributeValues=values,
-        ReturnValues="UPDATED_OLD",
-    ).get("Attributes", {})
+    )
 
-    # Forklift finished: close out the task it was running.
-    task_id = old.get("current_task") if kind == "event" and parsed.type == "done" else None
-    if task_id:
-        table("TASKS_TABLE").update_item(
-            Key={"task_id": task_id},
-            UpdateExpression="SET #s = :s, finished_at = :t",
-            ExpressionAttributeNames={"#s": "status"},
-            ExpressionAttributeValues={":s": "done", ":t": now_ms()},
-        )
-        publish(topics.task_status(task_id), TaskStatus(state="done", assigned_to=fid).to_dict())
+    if kind == "event" and parsed.type in ("done", "fault"):
+        on_task_event(fid, parsed.type)
+
+
+def on_task_event(fid: str, event_type: str) -> None:
+    """The forklift finished (or faulted) its current step: advance whatever task it's running."""
+    item = table("FORKLIFTS_TABLE").get_item(Key={"forklift_id": fid}).get("Item") or {}
+    task_id = item.get("current_task")
+    if not task_id:
+        return
+    task = table("TASKS_TABLE").get_item(Key={"task_id": task_id}).get("Item") or {}
+    if task.get("tree"):
+        tree_runner.on_event(fid, task_id, event_type)  # behavior tree: next step
+        return
+    # Plain goto from the map: the task is the single route.
+    state = "done" if event_type == "done" else "failed"
+    table("TASKS_TABLE").update_item(
+        Key={"task_id": task_id},
+        UpdateExpression="SET #s = :s, finished_at = :t",
+        ExpressionAttributeNames={"#s": "status"},
+        ExpressionAttributeValues={":s": state, ":t": now_ms()},
+    )
+    table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fid}, UpdateExpression="REMOVE current_task")
+    publish(topics.task_status(task_id), TaskStatus(state=state, assigned_to=fid, text=task.get("text")).to_dict())

@@ -109,6 +109,7 @@ class FleetStack(Stack):
         ingest = fn("Ingest", "ingest.handler")
         forklifts.grant_read_write_data(ingest)
         tasks.grant_read_write_data(ingest)
+        pallets.grant_read_write_data(ingest)  # tree runner updates pallet locations on Pick/Drop
         ingest.add_to_role_policy(publish_policy)
 
         planner = fn("RoutePlanner", "route_planner.handler")
@@ -119,14 +120,19 @@ class FleetStack(Stack):
 
         dispatch = fn("Dispatch", "dispatch.handler", timeout=60)
         tasks.grant_read_write_data(dispatch)
-        forklifts.grant_read_data(dispatch)
-        pallets.grant_read_data(dispatch)
+        forklifts.grant_read_write_data(dispatch)
+        pallets.grant_read_write_data(dispatch)
         planners.grant_read_data(dispatch)
         dispatch.add_to_role_policy(publish_policy)
-        # Ring 3: Bedrock (Claude) writes behavior trees.
+        # Ring 3: Claude on Bedrock writes behavior trees. Converse = bedrock:InvokeModel.
+        # `us.` inference profiles route to Claude models in US Regions, so the foundation-model
+        # ARN needs a Region wildcard; the profile itself is in this Region.
         dispatch.add_to_role_policy(iam.PolicyStatement(
-            actions=["bedrock:InvokeModel", "bedrock:Converse"],
-            resources=["*"],
+            actions=["bedrock:InvokeModel"],
+            resources=[
+                self.format_arn(service="bedrock", resource="inference-profile", resource_name="us.anthropic.claude-*"),
+                "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+            ],
         ))
 
         api = fn("Api", "api.handler")

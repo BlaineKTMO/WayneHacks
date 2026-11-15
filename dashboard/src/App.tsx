@@ -3,6 +3,7 @@ import '@aws-amplify/ui-react/styles.css'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Config } from './config'
 import type { Forklift, LogEntry, Task } from './types'
+import { PlanView } from './PlanView'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 
@@ -153,6 +154,7 @@ export function ConsoleView({ fleet, email, signOut }: { fleet: Fleet; email?: s
             <div className="presets">
               {PRESETS.map((p) => <button key={p} className="chip" disabled={fleet.conn !== 'live'} onClick={() => submit(undefined, p)}>{p}</button>)}
             </div>
+            <PlanView task={fleet.tasks.find((t) => t.task_id.startsWith('t-'))} />
           </section>
 
           <section className="panel">

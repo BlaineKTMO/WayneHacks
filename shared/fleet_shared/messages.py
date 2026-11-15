@@ -134,3 +134,4 @@ class TaskStatus(_Msg):
     assigned_to: Optional[str] = None
     planner_version: Optional[str] = None
     error: Optional[str] = None
+    text: Optional[str] = None  # the original order, echoed so the dashboard can label it

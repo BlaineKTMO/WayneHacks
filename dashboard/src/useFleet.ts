@@ -23,6 +23,7 @@ export function useFleet(cfg: Config) {
   const logId = useRef(0)
   const lastPose = useRef<Record<string, Pose & { at: number }>>({})
   const lastState = useRef<Record<string, string | undefined>>({})
+  const refreshPallets = useRef<() => void>(undefined)
 
   const addLog = (level: LogEntry['level'], text: string, unit?: string) =>
     setLog((l) => [{ id: ++logId.current, ts: Date.now(), level, unit, text }, ...l].slice(0, LOG_LEN))
@@ -108,9 +109,12 @@ export function useFleet(cfg: Config) {
     }
     if (p[0] === 'tasks' && p[2] === 'status') {
       const s = msg as TaskStatus
-      upsertTask({ task_id: p[1], status: s.state, assigned_to: s.assigned_to, error: s.error })
+      upsertTask({ task_id: p[1], status: s.state, assigned_to: s.assigned_to, error: s.error,
+                   text: s.text ?? undefined, tree: s.tree ?? undefined, planner_version: s.planner_version })
       if (s.state === 'failed') addLog('error', `Task ${p[1]} failed: ${s.error}`, s.assigned_to ?? undefined)
-      if (s.state === 'received') addLog('info', `Order received (${p[1]})`)
+      if (s.state === 'planning') addLog('info', `Planner ${s.planner_version ?? ''} is writing a plan…`)
+      if (s.state === 'done') addLog('ok', `Task ${p[1]} complete`, s.assigned_to ?? undefined)
+      refreshPallets.current?.()
     }
   }, [])
 
@@ -166,6 +170,15 @@ export function useFleet(cfg: Config) {
       }
     }
 
+    let palletTimer: ReturnType<typeof setTimeout>
+    refreshPallets.current = () => {
+      clearTimeout(palletTimer)
+      palletTimer = setTimeout(() => {
+        api<{ pallet_id: string; node: string }[]>(cfg, '/pallets')
+          .then((pl) => setPallets(Object.fromEntries(pl.map((x) => [x.pallet_id, x.node]))))
+          .catch(() => {})
+      }, 400)
+    }
     load().catch((e) => setError(String(e)))
     connect()
     return () => {

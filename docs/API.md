@@ -230,10 +230,7 @@ A plain-English order from the dashboard.
 
 Today, `Dispatch` stores the task and replies `received`. Ring 3 adds the Bedrock → validate → assign flow (§8).
 
-**Correlation gap:** the dashboard doesn't know the `task_id` until the first status message arrives. Two ways to close it, pick one in Ring 3:
-
-- (a) the dashboard subscribes to `tasks/+/status` and matches on `text`; or
-- (b) add an optional `client_ref` field to `tasks/new` that is echoed back in the status. This is a contract change.
+The dashboard subscribes to `tasks/+/status`; every status message echoes `text`, so a new task can be labelled as soon as its first status arrives.
 
 ### `tasks/{task_id}/status`
 
@@ -246,13 +243,15 @@ The lifecycle of a task.
 | `assigned_to` | string \| null | | forklift ID |
 | `planner_version` | string \| null | | which planner wrote the tree |
 | `error` | string \| null | | set when `state` is `failed` |
+| `text` | string \| null | | the original order, echoed so the dashboard can label it |
 
 | State | Status | Meaning |
 |---|---|---|
 | `received` | ✅ | Stored, not yet planned |
-| `planning` | 📐 | Bedrock is writing the tree |
+| `planning` | ✅ | Bedrock is writing the tree |
 | `running` | ✅ | Executing |
-| `done` | 📐 | Finished successfully |
+| `done` | ✅ | Finished successfully |
+| `cancelled` | ✅ | Cleared by an operator |
 | `failed` | ✅ | See `error` |
 
 📐 Ring 3 adds per-node tree status: `tree` nodes gain a `status` field (`pending` \| `running` \| `success` \| `failure`) so the dashboard can colour the tree live.
@@ -349,7 +348,7 @@ After editing, run `uv run pytest shared` (it checks the references) and `uv run
 
 ---
 
-## 5. Behavior trees 📐
+## 5. Behavior trees ✅
 
 What Bedrock produces and the tree runner executes. JSON, with every node an object that has a `type`.
 
@@ -382,7 +381,9 @@ Example: "move pallet 3 to dock B".
 4. The forklift holds at most one pallet: `Pick` and `Drop` alternate.
 5. Depth ≤ 5 and ≤ 20 nodes in total.
 
-**Bedrock contract.** Use the Converse API with one tool, `submit_tree(tree)`, whose input schema is the table above, and force the tool choice. The prompt gets:
+**Model:** `us.anthropic.claude-sonnet-4-6` (default planner `v1-sonnet`; override via a `prod` row in `FleetPlanners`).
+
+**Bedrock contract.** Use the Converse API with two tools, `submit_tree(reasoning, tree)` and `reject(reason)`, whose input schema is the table above, and force the tool choice. The prompt gets:
 
 - the primitive list;
 - node IDs only (no coordinates);
@@ -544,7 +545,7 @@ Behaviour is described under [`fleet/{id}/goto`](#fleetidgoto). It can publish t
 - obstacle-blocked edges removed from the graph;
 - lock acquisition before the path is published.
 
-### `Dispatch` ✅ stub → 📐 Ring 3 (handler `dispatch.handler`, timeout 60 s)
+### `Dispatch` ✅ (handler `dispatch.handler`, timeout 60 s)
 
 | Rule | SQL |
 |---|---|
@@ -562,9 +563,9 @@ Behaviour is described under [`fleet/{id}/goto`](#fleetidgoto). It can publish t
 
 The function is already allowed `bedrock:InvokeModel` and `bedrock:Converse`.
 
-### `TreeRunner` 📐
+### `tree_runner` module ✅
 
-This function ticks behavior trees. It is triggered by `fleet/+/event` (`done`, `fault`) through its own rule, or replaced by Step Functions if trees get long. It must be idempotent, because IoT delivers to Lambda at least once. Ignore a `done` for a leaf that is already marked `success`.
+Ticks behavior trees (`cloud/lambdas/tree_runner.py`). Dispatch calls `start()`; Ingest calls `on_event()` when a forklift running a tree task reports `done` or `fault`. Per-node status is stored in `FleetTasks.tree`. It must be idempotent, because IoT delivers to Lambda at least once. Ignore a `done` for a leaf that is already marked `success`.
 
 ### `Promote` 📐
 

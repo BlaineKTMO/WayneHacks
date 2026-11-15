@@ -219,3 +219,29 @@ button:disabled { opacity: .45; cursor: not-allowed; }
   .kpis { grid-template-columns: repeat(2, 1fr); padding: 16px 16px 0; }
   .workspace { padding: 16px; }
 }
+
+/* ---------- Plan view ---------- */
+.plan, .plan-empty { margin-top: 14px; border-top: 1px dashed var(--line-2); padding-top: 12px; }
+.plan-empty { font-size: 13px; color: var(--dim); }
+.plan-head { display: flex; align-items: baseline; gap: 10px; justify-content: space-between; }
+.plan-order { font-size: 14px; font-weight: 500; }
+.plan-meta { font-size: 11px; color: var(--dim); margin-top: 3px; }
+.plan-thinking { display: flex; align-items: center; gap: 10px; margin-top: 12px; color: #c9b6ff; font-size: 13px; }
+.spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid rgba(160,120,255,.25); border-top-color: #c9b6ff; animation: spin .8s linear infinite; }
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree { margin-top: 10px; }
+.tree ul { margin-left: 9px; padding-left: 12px; border-left: 1px solid var(--line-2); }
+.tn-row { display: flex; align-items: center; gap: 8px; padding: 3px 6px; border-radius: 6px; font-size: 13px; }
+.tn-icon { width: 16px; text-align: center; color: var(--dim); font-family: var(--mono); }
+.branch > .tn-row { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+.tn-state { margin-left: auto; font-family: var(--mono); font-size: 11px; }
+.leaf.tn-pending > .tn-row { color: var(--dim); }
+.leaf.tn-running > .tn-row { background: rgba(255,176,32,.1); color: var(--accent); box-shadow: inset 2px 0 0 var(--accent); }
+.leaf.tn-running .tn-icon { color: var(--accent); animation: blink 1s steps(2) infinite; }
+.leaf.tn-success > .tn-row { color: var(--text); }
+.leaf.tn-success .tn-icon, .leaf.tn-success .tn-state { color: var(--ok); }
+.leaf.tn-failure > .tn-row { color: var(--danger); }
+.tn-err { font-size: 11px; color: #ff8f9a; margin: 0 0 4px 30px; }
+.tlabel-planning { color: #c9b6ff; }
+.tstat-planning { background: #c9b6ff; }
+.tlabel-cancelled { color: var(--dim); }
