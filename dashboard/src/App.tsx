@@ -5,6 +5,7 @@ import type { Config } from './config'
 import type { Forklift, LogEntry, Task } from './types'
 import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
+import { SimSwitch } from './SimSwitch'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 
@@ -102,6 +103,8 @@ export function ConsoleView({ fleet, email, signOut, cfg }: { fleet: Fleet; emai
         <div className="brand"><Logo /><span className="brand-name">OVERHEAD</span><span className="brand-sub">Fleet Control</span></div>
         <div className="site"><span className="site-label">SITE</span>Demo Warehouse · Floor 1</div>
         <div className="spacer" />
+        {cfg && <SimSwitch cfg={cfg} />}
+        <a className="btn-ghost" href="/demo">Demo page</a>
         <div className={`link link-${fleet.conn}`}><span className="pulse" />{fleet.conn === 'live' ? 'LIVE' : fleet.conn === 'connecting' ? 'CONNECTING' : 'OFFLINE'}</div>
         <div className="clock mono">{clock(now)}</div>
         <div className="user" title={email}>{(email ?? '?')[0].toUpperCase()}</div>

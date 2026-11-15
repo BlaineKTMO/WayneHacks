@@ -73,9 +73,12 @@ def sign_in(o: dict) -> str:
     return u.id_token
 
 
-def api(o: dict, token: str | None, path: str, method: str = "GET"):
-    req = urllib.request.Request(o["DashboardApiUrl"] + path, method=method,
-                                 headers={"authorization": f"Bearer {token}"} if token else {})
+def api(o: dict, token: str | None, path: str, method: str = "GET", body: dict | None = None):
+    headers = {"authorization": f"Bearer {token}"} if token else {}
+    if body is not None:
+        headers["content-type"] = "application/json"
+    req = urllib.request.Request(o["DashboardApiUrl"] + path, method=method, headers=headers,
+                                 data=json.dumps(body).encode() if body is not None else None)
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.status, json.loads(r.read() or b"null")
@@ -127,7 +130,10 @@ class Inbox:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-sim", action="store_true", help="don't start local simulated forklifts")
+    ap.add_argument("--cloud-sim", action="store_true", help="use the AWS-hosted simulated fleet (switched on via the API)")
     a = ap.parse_args()
+    if a.cloud_sim:
+        a.no_sim = True
     o = outputs()
     sim = None
 
@@ -141,6 +147,18 @@ def main():
     try:
         token = sign_in(o)
         check("Cognito sign-in (SRP, like the browser)", bool(token))
+
+        if a.cloud_sim:
+            print("\n== Hosted simulated fleet")
+            st, hs = api(o, token, "/sim", "POST", {"on": True})
+            check("POST /sim turns the hosted fleet on", st == 200 and hs.get("on"), str(hs))
+            for _ in range(40):
+                st, hs = api(o, token, "/sim")
+                if hs.get("running"):
+                    break
+                time.sleep(5)
+            check("hosted fleet task running", bool(hs.get("running")), str(hs))
+            time.sleep(15)  # first poses after boot
 
         print("\n== API")
         st, _ = api(o, None, "/forklifts")

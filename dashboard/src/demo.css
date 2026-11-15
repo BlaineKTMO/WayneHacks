@@ -132,3 +132,13 @@ body.light {
   .d-highlights, .d-flow, .d-cards { grid-template-columns: 1fr; }
   .d-hero { padding-top: 64px; }
 }
+.d-seg { margin-left: auto; display: inline-flex; background: var(--bg); border-radius: 12px; padding: 3px; }
+.d-seg button { min-height: 38px; min-width: 56px; border: 0; border-radius: 9px; background: transparent; font: inherit; font-size: 15px; font-weight: 600; color: var(--muted); }
+.d-seg button.on { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.d-units .d-hint { display: none; }
+p.d-hint { margin: -4px 4px 10px; }
+.d-map.\33 d { background: #e9ebef; }
+.w3d { width: 100%; aspect-ratio: 3 / 2; touch-action: none; }
+.w3d canvas { display: block; width: 100% !important; height: 100% !important; }
+.d-sim { margin-top: 12px; }
+.d-sim .sim-switch { width: 100%; justify-content: center; min-height: 48px; font-size: 15px; background: var(--bg); color: var(--text); border-color: var(--line); }

@@ -1,13 +1,16 @@
 // /demo: hand-off iPad page. A scrolling story with the live fleet embedded in the middle.
 import { Authenticator, ThemeProvider } from '@aws-amplify/ui-react'
 import '@aws-amplify/ui-react/styles.css'
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Config } from './config'
 import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
+import { SimSwitch } from './SimSwitch'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 import './demo.css'
+
+const Warehouse3D = lazy(() => import('./Warehouse3D'))
 
 const PRESETS = ['Move pallet 3 to dock B', 'Bring pallet 1 to dock A', 'Swap pallets 1 and 2', 'Move pallet 2 to slot A4']
 
@@ -32,6 +35,7 @@ function Page({ cfg }: { cfg: Config }) {
   const [selected, setSelected] = useState<string>()
   const [text, setText] = useState('')
   const [toast, setToast] = useState<string>()
+  const [view, setView] = useState<'3d' | '2d'>('3d')
   const [now, setNow] = useState(Date.now())
   useEffect(() => { if (!selected && ids.length) setSelected(ids[0]) }, [ids.join(), selected])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
@@ -105,16 +109,28 @@ function Page({ cfg }: { cfg: Config }) {
                   </button>
                 )
               })}
-              <span className="d-hint">{selected ? <>Tap the floor to send <b>{selected.toUpperCase()}</b></> : 'Pick a forklift'}</span>
+              <div className="d-seg">
+                <button className={view === '3d' ? 'on' : ''} onClick={() => setView('3d')}>3D</button>
+                <button className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>2D</button>
+              </div>
             </div>
-            <div className="d-map">
-              {fleet.graph
+            <p className="d-hint">{selected ? <>Tap a spot on the floor to send <b>{selected.toUpperCase()}</b>{view === '3d' ? ' · drag to orbit, pinch to zoom' : ''}</> : 'Pick a forklift'}</p>
+            <div className={`d-map ${view}`}>
+              {fleet.graph && view === '3d' && (
+                <Suspense fallback={<div className="d-empty">Loading 3D…</div>}>
+                  <Warehouse3D graph={fleet.graph} forklifts={fleet.forklifts} pallets={fleet.pallets} locks={fleet.locks}
+                    selected={selected} onUnitClick={setSelected}
+                    onNodeClick={(n) => { if (selected && live) { fleet.goto(selected, n); setToast(`${selected.toUpperCase()} → ${n.replace('_', ' ').toUpperCase()}`) } }} />
+                </Suspense>
+              )}
+              {fleet.graph && view === '2d'
                 ? <WarehouseMap graph={fleet.graph} forklifts={fleet.forklifts} trails={fleet.trails} pallets={fleet.pallets}
                     locks={fleet.locks} selected={selected}
                     onNodeClick={(n) => { if (selected && live) { fleet.goto(selected, n); setToast(`${selected.toUpperCase()} → ${n.replace('_', ' ').toUpperCase()}`) } }}
                     onUnitClick={setSelected} />
-                : <div className="d-empty">Loading the floor…</div>}
+                : !fleet.graph && <div className="d-empty">Loading the floor…</div>}
             </div>
+            <div className="d-sim"><SimSwitch cfg={cfg} /></div>
             <div className="d-stops">
               {ids.map((id) => (
                 <button key={id} className="d-stop" onClick={() => { fleet.stop(id); setToast(`Stop sent to ${id.toUpperCase()}`) }}>
