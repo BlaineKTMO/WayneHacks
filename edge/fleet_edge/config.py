@@ -59,7 +59,10 @@ COMMAND_RATE_HZ = 20          # how often we send W lines
 LOST_TAG_STOP_S = 0.3         # tag not seen for this long -> send S (stop). Must stop within 0.5 s.
 
 # ---------------------------------------------------------------- driving
-MAX_SPEED = 60                # wheel command, 0..100. Start slow!
+MAX_SPEED = 45                # wheel command, 0..100. 60 blurred the raised tag (seen 35% of frames) and overshot ~27 mm
+# Right side is stronger: "straight" drives curved left ~16 deg/s at 50. Straight legs send
+# right = left * RIGHT_TRIM (spins untouched). Tune with drive_lab: , and . keys, then i/k.
+RIGHT_TRIM = 0.85
 MIN_SPEED = 25                # below this the motors stall (deadband). Measure in step4.
 LOOKAHEAD_M = 0.08            # pure pursuit look-ahead. Bigger = smoother, cuts corners more.
 ARRIVE_RADIUS_M = 0.03        # "reached the waypoint" distance
@@ -68,14 +71,38 @@ TURN_IN_PLACE_RAD = 1.2       # if target is more than this far off-heading, spi
 # 4-wheel skid steer turns less sharply than a 2-wheel robot: if turns come out short,
 # raise WHEEL_BASE_M (an "effective" track width, often 1.5-2x the measured one).
 
+# Turn-then-drive (turn_drive.py, what Ring 1 uses): spin in place, then drive straight.
+ALIGN_TOL_RAD = 0.14          # ~8 deg: stop spinning and start driving once this close
+REALIGN_RAD = 0.35            # ~20 deg: drifted this far on a straight leg -> stop and re-spin
+TURN_SPEED = 50               # spin speed when far off-heading. Skid steer needs more push to turn.
+TURN_MIN_SPEED = 35           # spin speed when nearly lined up. Raise if it stalls mid-turn.
+SLOWDOWN_M = 0.08             # start easing off this far from the waypoint; no re-spins inside it
+ARRIVE_SIDE_M = 0.05          # drawn level with the waypoint and this close sideways = reached
+SKIP_NEAR_M = 0.08            # standing this close to the next waypoint (not yet driving) = reached
+# The chassis spins about a point this far ahead of its centre (front-heavy: fork mast +
+# battery). Measured with drive_lab: 98-145 mm over 7 spins; re-measure if weight moves.
+PIVOT_FWD_M = 0.11
+# Border: tag 13 must stay this many pixels inside the camera frame. The raised tag is
+# ~115 px across (58 px half-width), so 60 px keeps all of it in view, only just. Raise it
+# if the tag gets lost near the frame edge. Every move is checked against this before it
+# starts (turn_drive.py).
+TAG_BORDER_MARGIN_PX = 60
+ALLOW_REVERSE = True          # target behind -> back up to it instead of turning round
+
 # ---------------------------------------------------------------- fork
 FORK_SPEED = 60               # fork motor command, 0..100. + = up.
 FORK_STEP_MS = 300            # how long one key press in step4 runs the fork
 FORK_LIFT_MS = 1500           # full lift / lower time for Pick/Drop. Measure it! Max 5000.
 
-# Ring 1 loop. Must sit inside the corner tags with room for the 235 x 108 mm chassis:
-# ~13 cm clear of every tag so the forklift (and its turns) never covers one.
-WAYPOINTS = [(0.15, 0.13), (0.38, 0.13), (0.38, 0.28), (0.15, 0.28)]
+# Ring 1 route: a straight back-and-forth along the bottom of the table. Must sit inside
+# the corner tags with room for the 235 x 108 mm chassis: ~13 cm clear of every tag so
+# the forklift (and its turns) never covers one. A pole stands near the top edge at about
+# (0.22, 0.38) m (re-measured after the tags moved), and its base plate makes it ~4 cm wide: keep the forklift's centre at
+# least ~17 cm from it (13 cm turning reach + base + margin). A full loop doesn't fit
+# beside it, so the route stays on the bottom lane.
+# The right end is 0.36, not 0.40: facing right there, tag 13 (front-right corner) would
+# sit outside the camera's view at its 271 mm height (the border, see below).
+WAYPOINTS = [(0.13, 0.13), (0.36, 0.13)]
 LAPS = 3
 
 # ---------------------------------------------------------------- pose filter
