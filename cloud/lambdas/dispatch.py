@@ -42,11 +42,12 @@ Turn the operator's order into a behavior tree using ONLY these primitives:
 
 Rules:
 - To move a pallet: GoTo(pallet's node), Pick(pallet), GoTo(destination), Drop(destination).
+- "Go to X" / "send a forklift to X" is valid: a Sequence with a single GoTo(X).
 - Drop only at slot or dock nodes, and only on an empty one.
 - A forklift carries one pallet at a time and must end empty-handed.
 - "pallet 3" means pallet_3, "dock B" means dock_B, "slot A2" means slot_A2.
 - Keep plans minimal. Don't add Retry/Fallback/WaitUntil unless the order asks for robustness.
-- If the order is impossible, ambiguous, or unrelated to moving pallets/forklifts, call reject.
+- If the order is impossible, ambiguous, or unrelated to moving pallets or forklifts, call reject.
 
 Warehouse nodes (id: type): {nodes}
 """,
