@@ -247,3 +247,7 @@ p.d-hint { margin: -4px 4px 10px; }
 
 .d-site { margin-left: auto; }
 .d-site select { min-height: 36px; background: #fff; color: var(--text); border-color: var(--line-2); font-size: 14px; }
+
+.d-reset-sim { min-height: 52px; border-radius: 14px; border: 1.5px solid var(--line-2); background: #fff; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; grid-column: 1 / -1; }
+.d-reset-sim.armed { background: #fff3f4; border-color: var(--danger); color: var(--danger); }
+.d-reset-sim:disabled { opacity: .6; }

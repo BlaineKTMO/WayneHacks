@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { Config, SiteInfo } from './config'
 import { SiteSwitcher, useSite } from './sites'
 import type { Forklift, LogEntry, Task } from './types'
+import { api } from './aws'
 import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { SimSwitch } from './SimSwitch'
@@ -164,7 +165,7 @@ export function ConsoleView({ fleet, email, signOut, cfg, sites = [], onSite }:
 
         <aside className="side">
           <section className="panel">
-            <div className="panel-head"><h2>AI dispatch</h2><span className="badge-ai">Claude · Bedrock</span></div>
+            <div className="panel-head"><h2>OE dispatch</h2><span className="badge-ai">Orchestration Engine · Bedrock</span></div>
             <form className="console" onSubmit={submit}>
               <span className="prompt mono">&gt;</span>
               <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Tell the fleet what to do…" autoComplete="off" />
@@ -173,6 +174,7 @@ export function ConsoleView({ fleet, email, signOut, cfg, sites = [], onSite }:
             <div className="presets">
               {PRESETS.map((p) => <button key={p} className="chip" disabled={fleet.conn !== 'live'} onClick={() => submit(undefined, p)}>{p}</button>)}
             </div>
+            <PlanView task={fleet.tasks.find((t) => t.task_id.startsWith('t-'))} />
             <PlanView task={fleet.tasks.find((t) => t.task_id.startsWith('t-'))} />
           </section>
 
@@ -210,7 +212,7 @@ export function ConsoleView({ fleet, email, signOut, cfg, sites = [], onSite }:
 
           <section className="panel grow">
             <div className="panel-head"><h2>Task queue</h2><span className="count">{fleet.tasks.length}</span></div>
-            <TaskList tasks={fleet.tasks} />
+            <TaskList tasks={fleet.tasks} cfg={cfg} />
           </section>
         </aside>
       </div>
@@ -255,21 +257,41 @@ function UnitCard({ f, online, selected, onSelect, onStop }: { f: Forklift; onli
   )
 }
 
-function TaskList({ tasks }: { tasks: Task[] }) {
+function TaskList({ tasks, cfg }: { tasks: Task[]; cfg?: Config }) {
+  const [open, setOpen] = useState<string>()
+  const [detail, setDetail] = useState<Record<string, Task>>({})
   if (!tasks.length) return <div className="empty small">No tasks yet. Dispatch one above or click the map.</div>
+  const toggle = (t: Task) => {
+    const next = open === t.task_id ? undefined : t.task_id
+    setOpen(next)
+    // Older tasks came from GET /tasks without their plan: fetch it once.
+    if (next && !t.tree && !detail[t.task_id] && cfg)
+      api<Task>(cfg, `/tasks/${t.task_id}`).then((full) => setDetail((d) => ({ ...d, [t.task_id]: full }))).catch(() => {})
+  }
   return (
     <ul className="tasks">
-      {tasks.slice(0, 15).map((t) => (
-        <li key={t.task_id}>
-          <span className={`tstat tstat-${t.status}`} />
-          <div className="t-main">
-            <div className="t-text">{t.text ? t.text.replace(/^goto /, 'Go to ') : t.task_id}</div>
-            <div className="t-meta mono">{t.task_id}{t.assigned_to && ` · ${t.assigned_to.toUpperCase()}`} · {ago(t.created_at)}</div>
-            {t.error && <div className="t-err">{t.error}</div>}
-          </div>
-          <span className={`tlabel tlabel-${t.status}`}>{t.status}</span>
-        </li>
-      ))}
+      {tasks.slice(0, 15).map((t) => {
+        const full = t.tree ? t : { ...detail[t.task_id], ...Object.fromEntries(Object.entries(t).filter(([, v]) => v != null)) } as Task
+        return (
+          <li key={t.task_id} className={`task-row ${open === t.task_id ? 'open' : ''}`}>
+            <button className="task-head" onClick={() => toggle(t)} aria-expanded={open === t.task_id}>
+              <span className={`tstat tstat-${t.status}`} />
+              <div className="t-main">
+                <div className="t-text">{t.text ? t.text.replace(/^goto /, 'Go to ') : t.task_id}</div>
+                <div className="t-meta mono">{t.task_id}{t.assigned_to && ` · ${t.assigned_to.toUpperCase()}`} · {ago(t.created_at)}</div>
+                {t.error && <div className="t-err">{t.error}</div>}
+              </div>
+              <span className={`tlabel tlabel-${t.status}`}>{t.status}</span>
+              <span className="t-chev">{open === t.task_id ? '▾' : '▸'}</span>
+            </button>
+            {open === t.task_id && (
+              <div className="task-plan">
+                {full.tree ? <PlanView task={full} /> : <div className="muted small">{detail[t.task_id] ? 'This task has no plan (a direct route).' : 'Loading plan…'}</div>}
+              </div>
+            )}
+          </li>
+        )
+      })}
     </ul>
   )
 }

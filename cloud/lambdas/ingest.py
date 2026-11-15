@@ -55,6 +55,11 @@ def handler(msg, _ctx):
 
     if kind == "telemetry":
         traffic.renew(fid, parsed.node)
+        # A forklift that couldn't reserve ANY of its route never got a path, so it never reports
+        # "blocked" itself. Its 1 Hz telemetry is the heartbeat that retries / replans / gives up.
+        gave_up = traffic.retry_if_stuck(fid)
+        if gave_up:
+            on_task_event(fid, "fault", gave_up)
     elif kind == "event":
         if parsed.type == "node_reached":
             traffic.on_node_reached(fid, parsed.node)

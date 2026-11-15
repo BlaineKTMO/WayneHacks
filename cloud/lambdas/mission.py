@@ -223,8 +223,24 @@ def cancel() -> dict | None:
         return m
 
     m = _mutate(active, fn) or get(active)
+    for mv in m.get("moves", []):
+        if mv["state"] == "running" and mv.get("forklift"):
+            stop_task(mv["task_id"], mv["forklift"])
     _report(m)
     return summary(m)
+
+
+def stop_task(task_id: str, fid: str) -> None:
+    """Cancel one running task: forklift halts, its reservations are released, it's free again."""
+    import traffic
+    table("TASKS_TABLE").update_item(Key={"task_id": task_id}, UpdateExpression="SET #s = :c, finished_at = :t",
+                                     ExpressionAttributeNames={"#s": "status"},
+                                     ExpressionAttributeValues={":c": "cancelled", ":t": now_ms()})
+    publish(topics.task_status(task_id), {"state": "cancelled"})
+    f = from_ddb(table("FORKLIFTS_TABLE").get_item(Key={"forklift_id": fid}).get("Item") or {})
+    publish(topics.path(fid), {"task_id": task_id, "nodes": [], "action": None})   # empty path = stop here
+    traffic.on_done(fid, f.get("node"))
+    table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fid}, UpdateExpression="REMOVE current_task")
 
 
 def restock() -> int:

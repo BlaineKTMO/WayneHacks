@@ -142,11 +142,27 @@ def reset_demo() -> dict:
                                              ExpressionAttributeValues={":c": "cancelled", ":t": now})
             publish(topics.task_status(t["task_id"]), {"state": "cancelled", "text": t.get("text")})
             cancelled += 1
+    if mission.current_id():
+        mission.cancel()
+    sim = bool(os.environ.get("SIM_SERVICE"))   # demo site: the simulated forklifts also go home
+    homes = GRAPH.forklift_homes
     for f in scan("FORKLIFTS_TABLE"):
-        table("FORKLIFTS_TABLE").update_item(
-            Key={"forklift_id": f["forklift_id"]},
-            UpdateExpression="REMOVE current_task, route, route_task, route_action, window_end, blocked_since, blocked_first")
-        publish(topics.path(f["forklift_id"]), {"task_id": "reset", "nodes": [], "action": None})  # stop driving
+        fid = f["forklift_id"]
+        if sim and fid in homes:
+            table("FORKLIFTS_TABLE").update_item(
+                Key={"forklift_id": fid}, ExpressionAttributeValues={":n": homes[fid], ":s": "IDLE"},
+                UpdateExpression="SET node = :n, #st = :s REMOVE current_task, route, route_task, route_action, "
+                                 "window_end, blocked_since, blocked_first, pose",
+                ExpressionAttributeNames={"#st": "state"})
+        else:
+            table("FORKLIFTS_TABLE").update_item(
+                Key={"forklift_id": fid},
+                UpdateExpression="REMOVE current_task, route, route_task, route_action, window_end, blocked_since, blocked_first")
+        publish(topics.path(fid), {"task_id": "reset", "nodes": [], "action": None})  # stop driving
+    if sim and sim_status()["on"]:
+        # The simulator starts each forklift at its node in this table: restart it = everyone home.
+        boto3.client("ecs").update_service(cluster=os.environ["SIM_CLUSTER"], service=os.environ["SIM_SERVICE"],
+                                           forceNewDeployment=True)
     for pid, node in GRAPH.pallets.items():
         table("PALLETS_TABLE").put_item(Item={"pallet_id": pid, "node": node})
     for p in scan("PLANNERS_TABLE"):
@@ -157,7 +173,7 @@ def reset_demo() -> dict:
     set_hazard({"clear": True})
     publish(topics.LOCKS, {"locks": {}, "ts": now})
     publish(topics.PLANNERS_PROMOTED, {"version": "v1-naive", "previous": None, "ts": now, "reset": True})
-    return {"reset": True, "cancelled_tasks": cancelled}
+    return {"reset": True, "cancelled_tasks": cancelled, "sim_restarting": bool(os.environ.get("SIM_SERVICE"))}
 
 
 def handler(event, _ctx):

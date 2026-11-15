@@ -315,6 +315,15 @@ def on_blocked(fid: str) -> str | None:
     return None
 
 
+def retry_if_stuck(fid: str) -> str | None:
+    """Heartbeat: if this forklift is waiting for a reservation, run the blocked logic (retry now,
+    replan after REPLAN_AFTER_MS, give up after GIVE_UP_AFTER_MS). Returns an error if it gave up."""
+    f = _forklift(fid)
+    if f.get("route") and f.get("blocked_since"):
+        return on_blocked(fid)
+    return None
+
+
 def renew(fid: str, node: str | None) -> None:
     """Telemetry heartbeat: keep this forklift's locks (and its parking spot) alive."""
     held = LOCKS.held()

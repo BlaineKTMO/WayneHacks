@@ -108,3 +108,24 @@ def test_busy_forklift_is_not_moved(monkeypatch):
     traffic.start_route("fl-01", "dock_B", "t1")
     traffic.on_blocked("fl-01")
     assert "route" not in tables["FORKLIFTS_TABLE"].items["fl-02"]
+
+
+def test_heartbeat_retries_a_forklift_that_never_got_a_path(monkeypatch):
+    """Blocked before its first move: no path, so no 'blocked' events. Telemetry must retry it."""
+    tables, locks, sent = install(monkeypatch, [{"forklift_id": "fl-01", "node": "j1"}])
+    locks.acquire("j3", "fl-02")
+    locks.acquire("j5", "fl-02")                         # both ways out of j1 taken
+    traffic.start_route("fl-01", "slot_A3", "t1")
+    assert paths(sent, "fl-01") == []                   # stuck, nothing sent
+    assert traffic.retry_if_stuck("fl-01") is None      # heartbeat: still blocked, no error yet
+    locks.release("j3", "fl-02")
+    traffic.retry_if_stuck("fl-01")                     # next heartbeat: lane free -> path goes out
+    assert paths(sent, "fl-01") and paths(sent, "fl-01")[-1]["nodes"][0]["id"] == "j1"
+    tables["FORKLIFTS_TABLE"].items["fl-01"].update(blocked_first=1, blocked_since=1)
+    locks.acquire("j3", "fl-02")
+    tables["FORKLIFTS_TABLE"].items["fl-01"]["window_end"] = None
+    tables["FORKLIFTS_TABLE"].items["fl-01"]["route"] = ["j1", "j3", "slot_A3"]
+    for n in ("j3",):
+        locks.release(n, "fl-01")
+    locks.acquire("j3", "fl-02")
+    assert traffic.retry_if_stuck("fl-01")              # stuck 45 s+ -> gives up with a reason

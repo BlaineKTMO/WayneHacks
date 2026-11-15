@@ -19,7 +19,7 @@ type Row = {
   candidates: { planner_version: string; sim_cost: number; valid: boolean; win: boolean; error?: string }[]
 }
 
-const model = (id?: string) => (id ?? '').replace(/^us\.anthropic\./, '').replace(/-\d{8}-v\d:\d$/, '')
+const model = (id?: string) => 'OE · ' + (id ?? '').replace(/^us\.anthropic\./, '').replace(/^claude-/, '').replace(/-\d{8}-v\d:\d$/, '')
 
 export function PlannerLab({ cfg, refreshKey }: { cfg: Config; refreshKey: number }) {
   const [planners, setPlanners] = useState<Planner[]>([])

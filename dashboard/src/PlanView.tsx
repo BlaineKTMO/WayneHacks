@@ -35,7 +35,7 @@ function Node({ n, depth }: { n: TreeNode; depth: number }) {
 }
 
 export function PlanView({ task }: { task?: Task }) {
-  if (!task) return <div className="plan-empty">Dispatch an order to see Claude's plan here.</div>
+  if (!task) return <div className="plan-empty">Dispatch an order to see the Orchestration Engine's plan here.</div>
   return (
     <div className="plan">
       <div className="plan-head">
@@ -45,7 +45,7 @@ export function PlanView({ task }: { task?: Task }) {
       <div className="plan-meta mono">
         {task.task_id}{task.assigned_to && ` · ${task.assigned_to.toUpperCase()}`}{task.planner_version && ` · planner ${task.planner_version}`}
       </div>
-      {task.status === 'planning' && <div className="plan-thinking"><span className="spinner" />Claude is planning…</div>}
+      {task.status === 'planning' && <div className="plan-thinking"><span className="spinner" />The OE is planning…</div>}
       {task.tree && <ul className="tree"><Node n={task.tree} depth={0} /></ul>}
       {task.status === 'failed' && task.error && <div className="t-err">{task.error}</div>}
     </div>

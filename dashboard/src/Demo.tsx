@@ -49,6 +49,8 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
   const [toast, setToast] = useState<string>()
   const [view, setView] = useState<'3d' | '2d'>('3d')
   const [personMode, setPersonMode] = useState(false)
+  const [armReset, setArmReset] = useState(false)
+  const [resetting, setResetting] = useState(false)
   const [confirmReset, setConfirmReset] = useState(false)
   const nodeById = useMemo(() => Object.fromEntries((fleet.graph?.nodes ?? []).map((n) => [n.id, n])), [fleet.graph])
   const onFloorTap = (n: string) => {
@@ -113,7 +115,7 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
       {/* ------------------------------------------------ highlights */}
       <section className="d-highlights">
         <div><b>0</b><span>sensors on the forklift</span><p>Each forklift has an AprilTag on its roof. A camera in the ceiling reads it, so the truck doesn’t need lidar.</p></div>
-        <div><b>~2 s</b><span>from words to a plan</span><p>You type an order, Claude on Amazon Bedrock writes a plan, and we check that plan before any forklift moves.<sup><a href="#notes">3</a></sup></p></div>
+        <div><b>~2 s</b><span>from words to a plan</span><p>You type an order, the OE (Orchestration Engine) on Amazon Bedrock writes a plan, and we check that plan before any forklift moves.<sup><a href="#notes">3</a></sup></p></div>
         <div><b>&lt;0.5 s</b><span>to stop, even offline</span><p>Stopping is handled on the forklift and the laptop beside the camera. If the Wi-Fi drops, the Free-WiLi’s watchdog cuts the motors anyway.</p></div>
       </section>
 
@@ -172,6 +174,19 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
                     🚶 {personMode ? 'Cancel' : 'Put a person on the floor'}
                   </button>}
               {cfg.site !== 'wh1' && <SimSwitch cfg={cfg} />}
+              {cfg.site !== 'wh1' && (
+                <button className={`d-reset-sim ${armReset ? 'armed' : ''}`} disabled={resetting}
+                        onClick={async () => {
+                          if (!armReset) { setArmReset(true); setTimeout(() => setArmReset(false), 4000); return }
+                          setArmReset(false); setResetting(true)
+                          try {
+                            await fleet.resetDemo()
+                            setToast('Resetting: forklifts return home, aisles restocked (~1 min)')
+                          } finally { setTimeout(() => setResetting(false), 60_000) }
+                        }}>
+                  {resetting ? '↺ Resetting… (~1 min)' : armReset ? 'Tap again to reset' : '↺ Reset sim'}
+                </button>
+              )}
             </div>
             <div className="d-stops">
               {ids.map((id) => (
@@ -197,7 +212,7 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
             <div className="d-devs"><h4>Devices</h4><Devices health={fleet.health} /></div>
             <CameraFeed camera={fleet.camera} className="d-cam" />
             <div id="plan" className="d-plan">
-              <h4>Claude's plan</h4>
+              <h4>Orchestration Engine plan</h4>
               <PlanView task={latest} />
             </div>
           </div>
@@ -222,7 +237,7 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
             ['Ceiling camera', 'Reads the AprilTags and finds each forklift 15–30 times a second.'],
             ['Edge laptop', 'Works out positions, steers the forklifts and stops them if a person is in the way. Keeps working offline.'],
             ['AWS IoT Core', 'The MQTT broker everything talks through: positions, paths and events.'],
-            ['Claude on Bedrock', 'Turns the order into a behavior tree using 7 fixed actions.'],
+            ['Orchestration Engine (OE)', 'Runs on Amazon Bedrock and turns the order into a behavior tree using 7 fixed actions.'],
             ['Validator', 'Simulates the plan first and rejects it if it grabs the wrong pallet, targets a full slot or takes a bad route.'],
             ['Forklift', 'Drives the lanes it has reserved, a short section at a time.'],
           ].map(([t, d], i) => (
@@ -249,8 +264,8 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
       <section id="safety" className="d-section alt">
         <h2>The AI never<br /><span>touches the motors.</span></h2>
         <div className="d-cards">
-          <div><b>No coordinates.</b><p>Claude only works with place names like “dock B”. It never sees coordinates and has no way to steer.</p></div>
-          <div><b>Checked before moving.</b><p>Each plan is simulated against the current warehouse first. If it fails, Claude gets one more try, and after that the order is cancelled.</p></div>
+          <div><b>No coordinates.</b><p>The OE only works with place names like “dock B”. It never sees coordinates and has no way to steer.</p></div>
+          <div><b>Checked before moving.</b><p>Each plan is simulated against the current warehouse first. If it fails, the OE gets one more try, and after that the order is cancelled.</p></div>
           <div><b>Lanes are reserved.</b><p>A forklift has to reserve the next few stops before it drives them. If it’s blocked for 5 seconds it finds another route, and a parked forklift that’s in the way moves aside.</p></div>
         </div>
       </section>
@@ -271,8 +286,8 @@ function Page({ cfg, sites, onSite }: { cfg: Config; sites: SiteInfo[]; onSite: 
             ['Why not put sensors on each forklift?', 'Putting lidar and a computer on every truck is the expensive part. One ceiling camera covers a whole aisle, and one planner serves the whole fleet.'],
             ['What happens if the internet goes down?', 'Each forklift finishes the stretch it has reserved and then stops. Tracking, steering and the people-stop all run on the edge laptop, so they keep working.'],
             ['Can the AI do something dangerous?', 'It can only arrange 7 fixed building blocks (go to, pick, drop, wait, retry…). A validator checks the plan against the real warehouse before anything moves.'],
-            ['What if Claude is unavailable?', 'A rule-based backup planner handles common orders, and the dashboard shows which planner wrote each plan.'],
-            ['What’s it built on?', 'AWS IoT Core, Lambda, DynamoDB, S3, Amazon Bedrock (Claude), Cognito and Amplify. A Free-WiLi drives each forklift’s motors.'],
+            ['What if the OE is unavailable?', 'A rule-based backup planner handles common orders, and the dashboard shows which planner wrote each plan.'],
+            ['What’s it built on?', 'AWS IoT Core, Lambda, DynamoDB, S3, Amazon Bedrock (the OE’s planner), Cognito and Amplify. A Free-WiLi drives each forklift’s motors.'],
           ].map(([q, a]) => (
             <details key={q}><summary>{q}</summary><p>{a}</p></details>
           ))}
