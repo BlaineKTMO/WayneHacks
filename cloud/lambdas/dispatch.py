@@ -95,8 +95,10 @@ def ask_llm(planner: dict, text: str, pallets: dict, forklifts: list[dict], mess
 
 def pick_forklift(forklifts: list[dict], target: str | None) -> dict | None:
     now = now_ms()
-    free = [f for f in forklifts if not f.get("current_task") and f.get("state") in (None, "IDLE")
-            and f.get("node") in GRAPH.nodes]
+    # Available = the cloud has nothing running on it. Don't trust the 1 Hz motion state (it lags
+    # by up to a second after "done"); a STOPPED forklift with no task is fine: its next path restarts it.
+    free = [f for f in forklifts if not f.get("current_task") and not f.get("route")
+            and f.get("state") != "FAULT" and f.get("node") in GRAPH.nodes]
     online = [f for f in free if now - int(f.get("last_seen", 0)) < ONLINE_MS]
     pool = online or free
     if not pool:

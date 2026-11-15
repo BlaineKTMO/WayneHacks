@@ -16,6 +16,7 @@ Connects over WebSocket signed with your `aws login` credentials (no device cert
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import math
 import queue
@@ -42,9 +43,19 @@ TELEMETRY_EVERY = 20     # 1 Hz
 BLOCKED_EVERY = 40       # re-send "blocked" every 2 s while waiting at the end of a partial path
 
 
+def last_known_nodes() -> dict[str, str]:
+    """Start where the cloud last saw each forklift, so state stays consistent across restarts."""
+    try:
+        items = boto3.resource("dynamodb", region_name=REGION).Table("FleetForklifts").scan()["Items"]
+        return {i["forklift_id"]: i["node"] for i in items if i.get("node")}
+    except Exception as e:
+        print(f"(could not read last positions, using defaults: {e})")
+        return {}
+
+
 class SimForklift:
-    def __init__(self, fid: str, graph: Graph, publish):
-        n = graph.nodes[START.get(fid, "dock_A")]
+    def __init__(self, fid: str, graph: Graph, publish, start: str | None = None):
+        n = graph.nodes[start if start in graph.nodes else START.get(fid, "dock_A")]
         self.fid, self.publish = fid, publish
         self.link = SimLink(x=n.x, y=n.y, theta=0.0)
         self.node = n.id
@@ -130,8 +141,11 @@ class SimForklift:
 
 def connect(client_id: str) -> mqtt.Connection:
     session = boto3.Session(region_name=REGION)
-    creds = session.get_credentials().get_frozen_credentials()
-    provider = auth.AwsCredentialsProvider.new_static(creds.access_key, creds.secret_key, creds.token)
+    if os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"):
+        provider = auth.AwsCredentialsProvider.new_default_chain()  # ECS task role; refreshes itself
+    else:
+        creds = session.get_credentials().get_frozen_credentials()  # local `aws login` session
+        provider = auth.AwsCredentialsProvider.new_static(creds.access_key, creds.secret_key, creds.token)
     endpoint = session.client("iot").describe_endpoint(endpointType="iot:Data-ATS")["endpointAddress"]
     def interrupted(connection, error, **_):
         print(f"!! MQTT connection interrupted: {error}", flush=True)
@@ -168,7 +182,8 @@ def main():
         with lock:
             conn.publish(topic=topic, payload=msg.to_json(), qos=mqtt.QoS.AT_MOST_ONCE)
 
-    fleet = {fid: SimForklift(fid, graph, publish) for fid in a.forklifts}
+    known = last_known_nodes()
+    fleet = {fid: SimForklift(fid, graph, publish, known.get(fid)) for fid in a.forklifts}
     for fid, f in fleet.items():
         for kind, topic in (("path", topics.path(fid)), ("stop", topics.stop(fid))):
             fut, _ = conn.subscribe(topic=topic, qos=mqtt.QoS.AT_LEAST_ONCE,

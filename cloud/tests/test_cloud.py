@@ -65,3 +65,14 @@ def test_shadow_planner_scored_and_counted(monkeypatch):
     res = dispatch.run_shadows({"task_id": "t9"}, [{"version": "v2"}], "move pallet 3 to dock B", pallets, [fl], prod_cost, snap)
     assert res[0]["win"] and res[0]["sim_cost"] < prod_cost
     assert sent[0][0] == "tasks/t9/shadow" and planners.items["v2"]["counted"]
+
+
+def test_pick_forklift_availability():
+    import dispatch
+    now = dispatch.now_ms()
+    fl = [{"forklift_id": "fl-01", "node": "dock_A", "state": "STOPPED", "last_seen": now},      # stopped, no task: OK
+          {"forklift_id": "fl-02", "node": "j6", "state": "DRIVING", "last_seen": now},          # telemetry lag: OK
+          {"forklift_id": "fl-03", "node": "j1", "state": "IDLE", "current_task": "t1", "last_seen": now},
+          {"forklift_id": "fl-04", "node": "j2", "state": "FAULT", "last_seen": now}]
+    pool = {dispatch.pick_forklift([f], "slot_A3") and f["forklift_id"] for f in fl} - {None}
+    assert pool == {"fl-01", "fl-02"}

@@ -46,7 +46,7 @@ def outputs() -> dict:
 
 
 # ---------------------------------------------------------------- setup
-def reset_fleet() -> None:
+def reset_fleet(keep_forklifts: bool) -> None:
     ddb = boto3.client("dynamodb", region_name=REGION)
     for item in ddb.scan(TableName="FleetEdgeLocks")["Items"]:
         ddb.delete_item(TableName="FleetEdgeLocks", Key={"edge_id": item["edge_id"]})
@@ -54,7 +54,8 @@ def reset_fleet() -> None:
         ddb.update_item(TableName="FleetForklifts", Key={"forklift_id": {"S": fid}},
                         UpdateExpression="REMOVE route, route_task, route_action, window_end, blocked_since, "
                                          "blocked_first, current_task, route_rev")
-    subprocess.run([sys.executable, str(ROOT / "cloud/scripts/seed.py")], check=True, capture_output=True)
+    cmd = [sys.executable, str(ROOT / "cloud/scripts/seed.py")] + (["--keep-forklifts"] if keep_forklifts else [])
+    subprocess.run(cmd, check=True, capture_output=True)
 
 
 def sign_in(o: dict) -> str:
@@ -131,7 +132,7 @@ def main():
     sim = None
 
     print("\n== Setup")
-    reset_fleet()
+    reset_fleet(keep_forklifts=a.no_sim)
     check("fleet state reset and reseeded", True)
     if not a.no_sim:
         sim = subprocess.Popen([sys.executable, "-u", str(ROOT / "tools/sim_fleet.py")],
@@ -144,7 +145,7 @@ def main():
         print("\n== API")
         st, _ = api(o, None, "/forklifts")
         check("API rejects requests without a token", st == 401, f"HTTP {st}")
-        for path in ("/graph", "/forklifts", "/pallets", "/tasks", "/planners", "/planners/compare"):
+        for path in ("/graph", "/forklifts", "/pallets", "/tasks", "/planners", "/planners/compare", "/sim"):
             st, body = api(o, token, path)
             check(f"GET {path}", st == 200, f"HTTP {st}")
         st, body = api(o, token, "/iot/attach", "POST")
@@ -161,10 +162,13 @@ def main():
         check("live forklift poses arriving", got is not None, got[0] if got else "no pose in 15s (is a fleet running?)")
 
         print("\n== Map goto (dashboard publish)")
+        _, fls = api(o, token, "/forklifts")
+        here = next((f.get("node") for f in fls if f["forklift_id"] == "fl-02"), None)
+        target = "j6" if here != "j6" else "j3"   # somewhere it isn't, so a route is needed
         t0 = time.time()
-        conn.publish(topic="fleet/fl-02/goto", payload=json.dumps({"node": "j6"}), qos=mqtt.QoS.AT_LEAST_ONCE)
+        conn.publish(topic="fleet/fl-02/goto", payload=json.dumps({"node": target}), qos=mqtt.QoS.AT_LEAST_ONCE)
         p = inbox.wait(lambda t, d: t == "fleet/fl-02/path", 15, t0)
-        check("route planner answers with a path", p is not None)
+        check("route planner answers with a path", p is not None, f"fl-02 {here} -> {target}")
         lk = inbox.wait(lambda t, d: t == "warehouse/locks" and "fl-02" in d.get("locks", {}).values(), 15, t0)
         check("lane reservations published", lk is not None)
         dn = inbox.wait(lambda t, d: t.startswith("tasks/goto-") and t.endswith("/status") and d.get("state") == "done", 60, t0)

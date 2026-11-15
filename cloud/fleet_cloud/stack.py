@@ -23,10 +23,11 @@ from aws_cdk import (
 from constructs import Construct
 
 from .dashboard import Dashboard
+from .simfleet import SimFleet
 
 
 class FleetStack(Stack):
-    def __init__(self, scope: Construct, cid: str, *, lambda_code_dir: str, **kw):
+    def __init__(self, scope: Construct, cid: str, *, lambda_code_dir: str, sim_code_dir: str, **kw):
         super().__init__(scope, cid, **kw)
 
         # ---------------- State: DynamoDB (what's true right now) ----------------
@@ -150,6 +151,7 @@ class FleetStack(Stack):
         planners.grant_read_write_data(api)  # promote
         api.add_to_role_policy(publish_policy)
         Dashboard(self, "Dashboard", api_fn=api)
+        SimFleet(self, "SimFleet", code_dir=sim_code_dir, forklifts_table=forklifts, api_fn=api)
 
         # ---------------- IoT rules ----------------------------------------------
         rule_errors = logs.LogGroup(self, "IotRuleErrors",

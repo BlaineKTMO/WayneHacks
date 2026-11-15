@@ -26,14 +26,17 @@ PLANNERS = [
 
 
 def main():
+    import sys
+    keep_forklifts = "--keep-forklifts" in sys.argv  # a fleet is running: don't contradict real positions
     ddb = boto3.resource("dynamodb", region_name=REGION)
     g = Graph.load()
     with ddb.Table("FleetPallets").batch_writer() as w:
         for pid, node in g.pallets.items():
             w.put_item(Item={"pallet_id": pid, "node": node})
-    with ddb.Table("FleetForklifts").batch_writer() as w:
-        for fid, node in FORKLIFTS.items():
-            w.put_item(Item={"forklift_id": fid, "node": node, "state": "IDLE"})
+    if not keep_forklifts:
+        with ddb.Table("FleetForklifts").batch_writer() as w:
+            for fid, node in FORKLIFTS.items():
+                w.put_item(Item={"forklift_id": fid, "node": node, "state": "IDLE"})
     planners = ddb.Table("FleetPlanners")
     if not planners.scan(Limit=1).get("Items"):
         for p in PLANNERS:

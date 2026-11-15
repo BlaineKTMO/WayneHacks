@@ -24,11 +24,28 @@ def stage_lambda_code() -> Path:
     return BUILD
 
 
+def stage_sim_code() -> Path:
+    """tools/sim_fleet.py + the modules it imports, for the Fargate simulated fleet."""
+    out = Path(__file__).resolve().parent / "build" / "simfleet"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True)
+    shutil.copy(ROOT / "tools" / "sim_fleet.py", out / "sim_fleet.py")
+    ign = shutil.ignore_patterns("__pycache__", "*.pyc")
+    shutil.copytree(ROOT / "shared" / "fleet_shared", out / "fleet_shared", ignore=ign)
+    shutil.copy(ROOT / "shared" / "warehouse.json", out / "fleet_shared" / "warehouse.json")
+    (out / "fleet_edge").mkdir()
+    for f in ("__init__.py", "config.py", "freewili_link.py", "pure_pursuit.py"):
+        shutil.copy(ROOT / "edge" / "fleet_edge" / f, out / "fleet_edge" / f)
+    return out
+
+
 app = cdk.App()
 FleetStack(
     app,
     "ForkliftFleet",
     lambda_code_dir=str(stage_lambda_code()),
+    sim_code_dir=str(stage_sim_code()),
     # Project Region is fixed (us-east-2). Account comes from your `aws login` session.
     env=cdk.Environment(region="us-east-2"),
 )

@@ -98,6 +98,19 @@ def promote(version: str):
     return ok({"version": version, "previous": prev})
 
 
+def sim_status() -> dict:
+    ecs = boto3.client("ecs")
+    svc = ecs.describe_services(cluster=os.environ["SIM_CLUSTER"], services=[os.environ["SIM_SERVICE"]])["services"][0]
+    return {"on": svc["desiredCount"] > 0, "desired": svc["desiredCount"], "running": svc["runningCount"],
+            "pending": svc["pendingCount"]}
+
+
+def sim_set(on: bool) -> dict:
+    boto3.client("ecs").update_service(cluster=os.environ["SIM_CLUSTER"], service=os.environ["SIM_SERVICE"],
+                                       desiredCount=1 if on else 0)
+    return sim_status()
+
+
 def handler(event, _ctx):
     route = event["routeKey"]
     params = event.get("pathParameters") or {}
@@ -127,6 +140,13 @@ def handler(event, _ctx):
             return ok(compare(min(int(qs.get("limit", 20)), 50)))
         if route == "POST /planners/{version}/promote":
             return promote(params["version"])
+        if route == "GET /sim":
+            return ok(sim_status())
+        if route == "POST /sim":
+            body = json.loads(event.get("body") or "{}")
+            if not isinstance(body.get("on"), bool):
+                return err(400, "bad_request", 'body must be {"on": true|false}')
+            return ok(sim_set(body["on"]))
         if route == "POST /iot/attach":
             return ok(attach_iot(event))
         return err(404, "not_found", route)
