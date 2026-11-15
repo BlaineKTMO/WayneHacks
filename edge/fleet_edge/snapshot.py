@@ -8,6 +8,7 @@ seen, forklift positions in metres) and the chessboard if visible. No window.
 from __future__ import annotations
 
 import argparse
+import functools
 import math
 import time
 from pathlib import Path
@@ -15,6 +16,8 @@ from pathlib import Path
 import cv2
 
 from . import config
+
+print = functools.partial(print, flush=True)  # noqa: A001 - survive the exit-time segfault
 from .localizer import Camera, Localizer, TagDetector
 
 
@@ -25,7 +28,8 @@ def main():
     ap.add_argument("--settle", type=float, default=1.5, help="seconds to let exposure settle")
     args = ap.parse_args()
 
-    cam, det, loc = Camera(), TagDetector(), Localizer()
+    cam = Camera()
+    det, loc = TagDetector(), Localizer(cam.K)
     t = time.time()
     frame = cam.read()
     while time.time() - t < args.settle:
@@ -59,7 +63,10 @@ def main():
     h, w = frame.shape[:2]
     print(f"frame {w}x{h}; calibration {'applied' if cam.K is not None else 'NOT applied'}")
     cv2.imwrite(str(out), view)
-    print(f"saved {out}")
+    print(f"saved {out}", flush=True)
+    # pupil_apriltags can segfault while the interpreter shuts down; the work is done.
+    import os
+    os._exit(0)
 
 
 if __name__ == "__main__":

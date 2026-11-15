@@ -15,23 +15,35 @@ CHESSBOARD_INNER = (10, 7)
 TAG_FAMILY = "tag36h11"
 TAG_SIZE_M = 0.0414           # printed black-square edge length (measured 41.4 mm)
 
-# The 4 corner tags pin the world frame: origin at the BOTTOM-LEFT tag's centre, x to the
-# right, y up (as seen in the camera image). Tag CENTRES, in metres, measured with a ruler
-# (2026-11-14): bottom 527 mm, right side 406 mm. The left side is assumed equal to the
-# right; if the tags aren't a true rectangle, measure it and put the real numbers here.
+# The 4 corner tags pin the world frame: origin at the BOTTOM-LEFT tag's centre, x toward
+# the bottom-right tag, y up (as seen in the camera image). Tag CENTRES, in metres.
+# The tags are NOT a rectangle (tag 4 sits left of tag 11). Positions measured by the
+# calibrated camera (2026-11-14), scaled so the bottom edge matches the ruler's 508 mm.
+# Camera vs ruler: bottom 506/508, right 372/376, left 336/345 mm.
 CORNER_TAGS = {
-    11: (0.000, 0.000),   # bottom-left (origin)
-    9:  (0.527, 0.000),   # bottom-right
-    5:  (0.527, 0.406),   # top-right
-    4:  (0.000, 0.406),   # top-left
+    11: (0.0000, 0.0000),   # bottom-left (origin)
+    9:  (0.5080, 0.0000),   # bottom-right
+    5:  (0.5086, 0.3732),   # top-right
+    4:  (-0.0313, 0.3357),  # top-left
 }
 
 # Tag on each forklift's roof -> forklift ID used everywhere else.
 FORKLIFT_TAGS = {13: "fl-01"}
 HERO_FORKLIFT = "fl-01"       # the one Ring 1 drives
+# Height of the forklift's tag above the table (metres). Camera-measured 271 mm; check with
+# a ruler. Needed because a raised tag looks shifted away from the point under the camera.
+FORKLIFT_TAG_HEIGHT_M = 0.271
 
 # If the tag arrow points somewhere other than the forklift's front, fix it here (radians).
-TAG_HEADING_OFFSET = 0.0
+# Our tag 13 is mounted turned 90 degrees: it read 176 deg with the fork facing +y (90 deg).
+TAG_HEADING_OFFSET = -1.5708
+
+# Where the tag sits relative to the chassis centre (midpoint between the axles), in the
+# forklift's own frame: + forward (toward the fork), + left. The pose reported is the
+# chassis centre, so the controller steers the right point. Measure with a ruler, viewed
+# from above. 0, 0 = the tag is straight above the chassis centre.
+TAG_OFFSET_FORWARD_M = 0.0
+TAG_OFFSET_LEFT_M = 0.0
 
 # ---------------------------------------------------------------- Free-WiLi serial link
 # "auto" finds the Free-WiLi OG main CPU by its USB name. Or set a path by hand

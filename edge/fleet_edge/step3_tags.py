@@ -19,7 +19,8 @@ from .localizer import Camera, Localizer, TagDetector
 
 
 def main():
-    cam, det, loc = Camera(), TagDetector(), Localizer()
+    cam = Camera()
+    det, loc = TagDetector(), Localizer(cam.K)
     while True:
         frame = cam.read()
         sightings = det.detect(frame)

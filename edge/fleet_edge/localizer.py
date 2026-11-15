@@ -73,7 +73,7 @@ class Camera:
         if not ok:
             raise RuntimeError("camera read failed (unplugged?)")
         if self.K is not None:
-            frame = cv2.undistort(frame, self.K, self.dist)
+            frame = cv2.undistort(frame, self.K, self.dist)   # same K describes the result
         return frame
 
     def close(self):
@@ -98,22 +98,51 @@ class TagDetector:
 
 
 class Localizer:
-    """Turns tag sightings into forklift poses in world metres."""
+    """Turns tag sightings into forklift poses in world metres.
 
-    def __init__(self):
-        self.H: np.ndarray | None = None       # pixels -> metres
+    Corner tags lie on the table, but the forklift's tag rides FORKLIFT_TAG_HEIGHT_M above
+    it. A camera sees a raised tag from an angle, so mapping it as if it were on the table
+    puts it too far from the point under the camera (65 mm off at 27 cm height on our
+    rig). With a lens calibration (K), the camera's position is solved from the four
+    corner tags and each forklift tag's line of sight is intersected with the plane at
+    its real height. Without one, it falls back to the flat table mapping.
+    """
+
+    def __init__(self, K: np.ndarray | None = None):
+        self.K = K                              # camera matrix of the UNDISTORTED image
+        self.H: np.ndarray | None = None       # pixels -> metres, table plane
+        self.R: np.ndarray | None = None       # camera pose from the corner tags (world -> camera)
+        self.cam_pos: np.ndarray | None = None  # camera centre in world metres
         self.filtered: dict[str, ForkliftPose] = {}
+        if K is None and config.FORKLIFT_TAG_HEIGHT_M > 0:
+            print(f"[localizer] no lens calibration: forklift tags are mapped as if on the table, "
+                  f"ignoring their {config.FORKLIFT_TAG_HEIGHT_M * 1000:.0f} mm height (positions will be off)")
 
     def update_homography(self, sightings: list[TagSighting]) -> bool:
         seen = {s.tag_id: s for s in sightings if s.tag_id in config.CORNER_TAGS}
         if len(seen) < 4:
             return self.H is not None  # keep the last good one
-        px = np.array([seen[i].center_px for i in sorted(seen)], dtype=np.float32)
-        world = np.array([config.CORNER_TAGS[i] for i in sorted(seen)], dtype=np.float32)
+        px = np.array([seen[i].center_px for i in sorted(seen)], dtype=np.float64)
+        world = np.array([config.CORNER_TAGS[i] for i in sorted(seen)], dtype=np.float64)
         self.H, _ = cv2.findHomography(px, world)
+        if self.K is not None:
+            obj = np.hstack([world, np.zeros((len(world), 1))])
+            ok, rvec, tvec = cv2.solvePnP(obj, px, self.K, None, flags=cv2.SOLVEPNP_IPPE)
+            if ok:
+                self.R, _ = cv2.Rodrigues(rvec)
+                self.cam_pos = (-self.R.T @ tvec).ravel()
         return True
 
-    def to_world(self, px: tuple[float, float]) -> tuple[float, float]:
+    def to_world(self, px: tuple[float, float], height: float = 0.0) -> tuple[float, float]:
+        """Pixel -> world (x, y) on the plane `height` metres above the table."""
+        if height and self.cam_pos is not None:
+            ray = self.R.T @ np.linalg.solve(self.K, np.array([px[0], px[1], 1.0]))
+            # World z points either toward or away from the camera depending on the
+            # tag layout; "above the table" is always the camera's side.
+            z = height if self.cam_pos[2] > 0 else -height
+            s = (z - self.cam_pos[2]) / ray[2]
+            p = self.cam_pos + s * ray
+            return float(p[0]), float(p[1])
         p = self.H @ np.array([px[0], px[1], 1.0])
         return float(p[0] / p[2]), float(p[1] / p[2])
 
@@ -122,18 +151,23 @@ class Localizer:
         if not self.update_homography(sightings):
             return {}
         now = time.monotonic()
+        h = config.FORKLIFT_TAG_HEIGHT_M
         result = {}
         for s in sightings:
             fid = config.FORKLIFT_TAGS.get(s.tag_id)
             if not fid:
                 continue
-            x, y = self.to_world(s.center_px)
-            # Heading: map a point a little "up" the tag through the homography too, so
-            # camera tilt doesn't skew the angle.
+            x, y = self.to_world(s.center_px, h)
+            # Heading: map a point a little "up" the tag the same way, so camera tilt
+            # doesn't skew the angle.
             ux = s.center_px[0] + 20 * math.cos(s.heading_px)
             uy = s.center_px[1] + 20 * math.sin(s.heading_px)
-            hx, hy = self.to_world((ux, uy))
+            hx, hy = self.to_world((ux, uy), h)
             theta = math.atan2(hy - y, hx - x) + config.TAG_HEADING_OFFSET
+            # Tag position -> chassis centre.
+            fwd, left = config.TAG_OFFSET_FORWARD_M, config.TAG_OFFSET_LEFT_M
+            x -= fwd * math.cos(theta) - left * math.sin(theta)
+            y -= fwd * math.sin(theta) + left * math.cos(theta)
             result[fid] = self._filter(ForkliftPose(fid, x, y, theta, 1.0, now))
         return result
 

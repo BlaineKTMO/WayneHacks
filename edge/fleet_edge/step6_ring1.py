@@ -37,7 +37,8 @@ def main():
     else:
         from .localizer import Camera, Localizer, TagDetector
         link = SerialLink()
-        camera, detector, localizer = Camera(), TagDetector(), Localizer()
+        camera = Camera()
+        detector, localizer = TagDetector(), Localizer(camera.K)
 
     Path(args.log).parent.mkdir(parents=True, exist_ok=True)
     log = csv.writer(open(args.log, "w", newline=""))
