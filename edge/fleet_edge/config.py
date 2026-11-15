@@ -42,8 +42,10 @@ TAG_HEADING_OFFSET = -1.5708
 # forklift's own frame: + forward (toward the fork), + left. The pose reported is the
 # chassis centre, so the controller steers the right point. Measure with a ruler, viewed
 # from above. 0, 0 = the tag is straight above the chassis centre.
-TAG_OFFSET_FORWARD_M = 0.0
-TAG_OFFSET_LEFT_M = 0.0
+# Tag 13 is over the front-right corner of the 235 x 108 mm chassis (rough).
+# Fine-tune: spin the forklift in place; with the right offsets the reported x, y barely moves.
+TAG_OFFSET_FORWARD_M = 0.1175
+TAG_OFFSET_LEFT_M = -0.054
 
 # ---------------------------------------------------------------- Free-WiLi serial link
 # "auto" finds the Free-WiLi OG main CPU by its USB name. Or set a path by hand
