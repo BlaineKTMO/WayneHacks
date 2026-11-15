@@ -74,3 +74,17 @@ def test_renew_never_resurrects_released_locks(monkeypatch):
     traffic.on_node_reached("fl-01", "j1")       # releases dock_A
     traffic.renew("fl-01", "j1")                 # telemetry heartbeat
     assert "dock_A" not in locks.held()
+
+
+def test_concurrent_route_updates_are_not_lost(monkeypatch):
+    """Two node_reached events processed 'at once': the later write must not undo the earlier one."""
+    tables, locks, _ = install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_A"}])
+    traffic.start_route("fl-01", "slot_A4", "t1")
+    stale = dict(tables["FORKLIFTS_TABLE"].items["fl-01"])   # what a parallel Lambda read earlier
+    traffic.on_node_reached("fl-01", "j1")
+    real_read = traffic._forklift
+    reads = iter([stale])
+    monkeypatch.setattr(traffic, "_forklift", lambda fid: next(reads, None) or real_read(fid))
+    traffic.on_node_reached("fl-01", "j3")                    # first attempt uses the stale read -> conflict -> retry
+    assert tables["FORKLIFTS_TABLE"].items["fl-01"]["route"][0] == "j3"
+    assert "j1" not in locks.held() and "dock_A" not in locks.held()

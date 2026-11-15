@@ -7,7 +7,7 @@ class FakeTable:
     def __init__(self, key, items=()):
         self.key, self.items = key, {i[key]: dict(i) for i in items}
 
-    def get_item(self, Key):
+    def get_item(self, Key, **_):
         k = Key[self.key]
         return {"Item": dict(self.items[k])} if k in self.items else {}
 
@@ -17,9 +17,14 @@ class FakeTable:
     def scan(self, **_):
         return {"Items": [dict(v) for v in self.items.values()]}
 
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames=None, ExpressionAttributeValues=None, **_):
+    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames=None, ExpressionAttributeValues=None,
+                    ConditionExpression=None, **_):
         names, values = ExpressionAttributeNames or {}, ExpressionAttributeValues or {}
         item = self.items.setdefault(Key[self.key], dict(Key))
+        if ConditionExpression == "attribute_not_exists(route_rev)" and "route_rev" in item or \
+           ConditionExpression == "route_rev = :expected" and item.get("route_rev") != values[":expected"]:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
         for verb, body in re.findall(r"(SET|REMOVE)\s+(.*?)(?=\s+(?:SET|REMOVE)\s|$)", UpdateExpression):
             for part in body.split(","):
                 part = part.strip()

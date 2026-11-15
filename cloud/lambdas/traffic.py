@@ -93,28 +93,65 @@ def publish_locks() -> None:
 
 
 # ---------------------------------------------------------------- forklift route state
+# IoT Core invokes Lambdas in parallel, so node_reached / blocked / telemetry for one forklift
+# can be processed concurrently. Every route change is a read-modify-write guarded by
+# `route_rev` (optimistic concurrency): if someone else changed the route first, re-read and redo.
+MAX_RETRIES = 8
+
+
+class _Conflict(Exception):
+    pass
+
+
 def _forklift(fid: str) -> dict:
-    return from_ddb(table("FORKLIFTS_TABLE").get_item(Key={"forklift_id": fid}).get("Item") or {})
+    return from_ddb(table("FORKLIFTS_TABLE").get_item(Key={"forklift_id": fid}, ConsistentRead=True).get("Item") or {})
 
 
-def _set(fid: str, **attrs) -> None:
-    """SET non-None attrs, REMOVE None attrs."""
+def _write(fid: str, rev: int | None, attrs: dict) -> None:
+    """SET non-None attrs, REMOVE None attrs, bump route_rev; fail if route_rev moved."""
     sets = {k: v for k, v in attrs.items() if v is not None}
     rems = [k for k, v in attrs.items() if v is None]
-    expr = []
-    if sets:
-        expr.append("SET " + ", ".join(f"#{k} = :{k}" for k in sets))
+    new_rev = (rev or 0) + 1
+    sets["route_rev"] = new_rev
+    names = {f"#{k}": k for k in list(sets) + rems}
+    values = {f":{k}": v for k, v in sets.items()}
+    expr = "SET " + ", ".join(f"#{k} = :{k}" for k in sets)
     if rems:
-        expr.append("REMOVE " + ", ".join(f"#{k}" for k in rems))
-    kw = {"ExpressionAttributeNames": {f"#{k}": k for k in attrs}}
-    if sets:
-        kw["ExpressionAttributeValues"] = {f":{k}": v for k, v in sets.items()}
-    table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fid}, UpdateExpression=" ".join(expr), **kw)
+        expr += " REMOVE " + ", ".join(f"#{k}" for k in rems)
+    if rev is None:
+        cond = "attribute_not_exists(route_rev)"
+    else:
+        cond = "route_rev = :expected"
+        values[":expected"] = rev
+    try:
+        table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fid}, UpdateExpression=expr,
+                                             ConditionExpression=cond, ExpressionAttributeNames=names,
+                                             ExpressionAttributeValues=values)
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            raise _Conflict() from e
+        raise
 
 
-def _clear_route(fid: str) -> None:
-    _set(fid, route=None, route_task=None, route_action=None, window_end=None,
-         blocked_since=None, blocked_first=None)
+def _mutate(fid: str, fn) -> dict:
+    """Run fn(forklift) -> attrs|None against the latest state, retrying on concurrent changes.
+    Returns the state fn saw on the successful attempt (with attrs applied)."""
+    for _ in range(MAX_RETRIES):
+        f = _forklift(fid)
+        attrs = fn(f)
+        if not attrs:
+            return f
+        try:
+            _write(fid, f.get("route_rev"), attrs)
+            return {**f, **{k: v for k, v in attrs.items() if v is not None}}
+        except _Conflict:
+            continue
+    log.warning("%s: gave up after %d concurrent route updates", fid, MAX_RETRIES)
+    return _forklift(fid)
+
+
+CLEARED = dict(route=None, route_task=None, route_action=None, window_end=None,
+               blocked_since=None, blocked_first=None)
 
 
 def _route_avoiding_others(start: str, goal: str, fid: str) -> list[str] | None:
@@ -144,44 +181,52 @@ def start_route(fid: str, goal: str, task_id: str, action: str | None = None) ->
         if h == fid and n != start:
             LOCKS.release(n, fid)
     LOCKS.acquire(start, fid, task_id)
-    _set(fid, route=route, route_task=task_id, route_action=action, window_end=None,
-         blocked_since=None, blocked_first=None)
+    _mutate(fid, lambda _f: dict(CLEARED, route=route, route_task=task_id, route_action=action))
     advance(fid)
     return True
 
 
 def advance(fid: str) -> None:
     """Grab as many locks ahead as allowed and publish the drivable window if it grew."""
-    f = _forklift(fid)
-    route = f.get("route")
-    if not route:
-        return
-    task_id = f.get("route_task") or "-"
-    k = 1  # route[0] (where we are) was locked by start_route / the previous window
-    while k < len(route) and k <= LOOKAHEAD and LOCKS.acquire(route[k], fid, task_id):
-        k += 1
-    window = route[:k]
-    if k > 1 and window[-1] != f.get("window_end"):
-        partial = k < len(route)
-        msg = Path(task_id=task_id, nodes=GRAPH.to_path_nodes(window),
-                   action=None if partial else f.get("route_action"), partial=partial)
-        publish(topics.path(fid), msg.to_dict())
-        _set(fid, window_end=window[-1], blocked_since=None)
-    elif k == 1 and not f.get("blocked_since"):
-        now = now_ms()
-        _set(fid, blocked_since=now, blocked_first=f.get("blocked_first") or now)
+    out: dict = {}
+
+    def fn(f):
+        out.clear()
+        route = f.get("route")
+        if not route:
+            return None
+        task_id = f.get("route_task") or "-"
+        k = 1  # route[0] (where we are) is already ours
+        while k < len(route) and k <= LOOKAHEAD and LOCKS.acquire(route[k], fid, task_id):
+            k += 1
+        window = route[:k]
+        if k > 1 and window[-1] != f.get("window_end"):
+            partial = k < len(route)
+            out["path"] = Path(task_id=task_id, nodes=GRAPH.to_path_nodes(window),
+                               action=None if partial else f.get("route_action"), partial=partial)
+            return {"window_end": window[-1], "blocked_since": None, "blocked_first": None}
+        if k == 1 and not f.get("blocked_since"):
+            now = now_ms()
+            return {"blocked_since": now, "blocked_first": f.get("blocked_first") or now}
+        return None
+
+    _mutate(fid, fn)
+    if "path" in out:  # publish only after the state that matches it is saved
+        publish(topics.path(fid), out["path"].to_dict())
     publish_locks()
 
 
 def on_node_reached(fid: str, node: str) -> None:
-    f = _forklift(fid)
-    route = f.get("route")
-    if not route or node not in route:
-        return
-    i = route.index(node)
-    for behind in route[:i]:
-        LOCKS.release(behind, fid)
-    _set(fid, route=route[i:])
+    def fn(f):
+        route = f.get("route")
+        if not route or node not in route or route[0] == node:
+            return None
+        i = route.index(node)
+        for behind in route[:i]:
+            LOCKS.release(behind, fid)
+        return {"route": route[i:]}
+
+    _mutate(fid, fn)
     advance(fid)
 
 
@@ -192,34 +237,45 @@ def on_done(fid: str, node: str | None) -> None:
             LOCKS.release(n, fid)
     if node:
         LOCKS.acquire(node, fid)
-    _clear_route(fid)
+    _mutate(fid, lambda f: dict(CLEARED) if f.get("route") else None)
     publish_locks()
 
 
 def on_blocked(fid: str) -> str | None:
     """Forklift is waiting at the end of its window. Returns an error string if we gave up."""
     advance(fid)
-    f = _forklift(fid)
-    route, since, first = f.get("route"), f.get("blocked_since"), f.get("blocked_first")
-    if not route or not since:
-        return None
-    now = now_ms()
-    if first and now - first > GIVE_UP_AFTER_MS:
-        held = LOCKS.held()
-        blocker = next((held[n] for n in route[1:] if held.get(n, fid) != fid), "another forklift")
-        on_done(fid, route[0])
-        return f"blocked for {GIVE_UP_AFTER_MS // 1000}s by {blocker}"
-    if now - since > REPLAN_AFTER_MS:
+    result: dict = {}
+
+    def fn(f):
+        result.clear()
+        route, since, first = f.get("route"), f.get("blocked_since"), f.get("blocked_first")
+        if not route or not since:
+            return None
+        now = now_ms()
+        if first and now - first > GIVE_UP_AFTER_MS:
+            held = LOCKS.held()
+            blocker = next((held[n] for n in route[1:] if held.get(n, fid) != fid), "another forklift")
+            result["gave_up"] = (route[0], f"blocked for {GIVE_UP_AFTER_MS // 1000}s by {blocker}")
+            return None
+        if now - since <= REPLAN_AFTER_MS:
+            return None
         new = _route_avoiding_others(route[0], route[-1], fid)
         if new and new != route:
             log.info("%s replanning around traffic: %s -> %s", fid, route, new)
             for n, h in LOCKS.held().items():
                 if h == fid and n not in new:
                     LOCKS.release(n, fid)
-            _set(fid, route=new, window_end=None, blocked_since=now)
-            advance(fid)
-        else:
-            _set(fid, blocked_since=now)  # check again in another REPLAN_AFTER_MS
+            result["replanned"] = True
+            return {"route": new, "window_end": None, "blocked_since": now}
+        return {"blocked_since": now}  # nothing better yet; check again in REPLAN_AFTER_MS
+
+    _mutate(fid, fn)
+    if "gave_up" in result:
+        node, err = result["gave_up"]
+        on_done(fid, node)
+        return err
+    if result.get("replanned"):
+        advance(fid)
     return None
 
 
