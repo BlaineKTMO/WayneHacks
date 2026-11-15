@@ -182,7 +182,7 @@ def start_route(fid: str, goal: str, task_id: str, action: str | None = None) ->
             LOCKS.release(n, fid)
     LOCKS.acquire(start, fid, task_id)
     _mutate(fid, lambda _f: dict(CLEARED, route=route, route_task=task_id, route_action=action))
-    if not task_id.startswith("yield-"):  # don't let make-way moves cascade
+    if not task_id.startswith(("yield-", "park-")):  # don't let make-way / parking moves cascade
         make_way(fid, route)
     advance(fid)
     return True
@@ -206,7 +206,7 @@ def advance(fid: str) -> None:
             partial = k < len(route)
             out["path"] = Path(task_id=task_id, nodes=GRAPH.to_path_nodes(window),
                                action=None if partial else f.get("route_action"), partial=partial)
-            return {"window_end": window[-1], "blocked_since": None, "blocked_first": None}
+            return {"window_end": window[-1], "blocked_since": None, "blocked_first": None, "window_sent_at": now_ms()}
         if k == 1 and not f.get("blocked_since"):
             now = now_ms()
             return {"blocked_since": now, "blocked_first": f.get("blocked_first") or now}
@@ -315,12 +315,58 @@ def on_blocked(fid: str) -> str | None:
     return None
 
 
-def retry_if_stuck(fid: str) -> str | None:
-    """Heartbeat: if this forklift is waiting for a reservation, run the blocked logic (retry now,
-    replan after REPLAN_AFTER_MS, give up after GIVE_UP_AFTER_MS). Returns an error if it gave up."""
+RESEND_AFTER_MS = 4_000
+
+
+def park_if_dead_end(fid: str) -> str | None:
+    """Docks and slots are dead ends: a forklift idling on one traps anyone who needs it (it can only
+    leave through the junction the newcomer is waiting on). After a job, drive to the nearest free
+    junction that isn't beside a dock. Only with more than one forklift on the site.
+    Returns the parking spot, or None."""
     f = _forklift(fid)
-    if f.get("route") and f.get("blocked_since"):
+    node = f.get("node")
+    if f.get("route") or f.get("current_task") or node not in GRAPH.nodes or GRAPH.nodes[node].type == "junction":
+        return None
+    fleet = from_ddb(table("FORKLIFTS_TABLE").scan()["Items"])
+    if len(fleet) < 2:
+        return None
+    held = LOCKS.held()
+    busy_routes = {n for x in fleet if x["forklift_id"] != fid for n in (x.get("route") or [])}
+    docks_nearby = {m for n in GRAPH.nodes.values() if n.type == "dock" for m in GRAPH.adj[n.id]}
+    spots = [n.id for n in GRAPH.nodes.values() if n.type == "junction" and n.id not in held
+             and n.id not in busy_routes and n.id not in docks_nearby]
+    best, best_d = None, float("inf")
+    for sp in spots:
+        r = _route_avoiding_others(node, sp, fid)
+        if r and GRAPH.path_length(r) < best_d:
+            best, best_d = sp, GRAPH.path_length(r)
+    if best:
+        log.info("%s parked on dead end %s: moving to %s", fid, node, best)
+        start_route(fid, best, f"park-{fid}")
+    return best
+
+
+def retry_if_stuck(fid: str, reported_state: str | None = None) -> str | None:
+    """Heartbeat (1 Hz telemetry). Returns an error if the forklift gave up.
+    - Waiting for a reservation: run the blocked logic (retry, replan after 5 s, give up after 45 s).
+      A forklift blocked before its first move never got a path, so never says "blocked" itself.
+    - Has a reserved stretch but reports IDLE for a while: its path message was lost (Wi-Fi blip,
+      simulator restart). Send the same stretch again; a forklift that has it just replaces it."""
+    f = _forklift(fid)
+    route = f.get("route")
+    if route and f.get("blocked_since"):
         return on_blocked(fid)
+    end = f.get("window_end")
+    if route and end in route and reported_state == "IDLE" \
+            and now_ms() - int(f.get("window_sent_at") or 0) > RESEND_AFTER_MS:
+        window = route[:route.index(end) + 1]
+        if len(window) > 1:
+            partial = len(window) < len(route)
+            msg = Path(task_id=f.get("route_task") or "-", nodes=GRAPH.to_path_nodes(window),
+                       action=None if partial else f.get("route_action"), partial=partial)
+            log.warning("%s idle with a reserved stretch %s: re-sending its path", fid, window)
+            _mutate(fid, lambda _f: {"window_sent_at": now_ms()})
+            publish(topics.path(fid), msg.to_dict())
     return None
 
 

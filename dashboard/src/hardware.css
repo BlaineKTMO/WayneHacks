@@ -1,0 +1,16 @@
+/* hardware photos + parts list */
+.hw-hero { margin: 40px 0 0; }
+.hw-hero img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 22px; background: var(--line); }
+.hw-hero figcaption, .hw-unit figcaption span { color: var(--muted); font-size: 15px; line-height: 1.45; }
+.hw-hero figcaption { margin-top: 10px; }
+.hw-units { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+.hw-unit { margin: 0; background: #fff; border-radius: 22px; overflow: hidden; }
+.hw-unit img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; background: var(--line); }
+.hw-unit figcaption { padding: 16px 20px 20px; }
+.hw-unit b { display: block; font-size: 19px; letter-spacing: -.02em; font-family: var(--mono); margin-bottom: 4px; }
+.hw-parts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 16px; }
+.hw-parts > div { background: #fff; border-radius: 22px; padding: 22px 24px; }
+.hw-parts b { font-size: 18px; letter-spacing: -.01em; }
+.hw-parts p { color: var(--muted); font-size: 15px; line-height: 1.5; margin: 6px 0 0; }
+@media (max-width: 900px) { .hw-units, .hw-parts { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .hw-units, .hw-parts { grid-template-columns: 1fr; } }

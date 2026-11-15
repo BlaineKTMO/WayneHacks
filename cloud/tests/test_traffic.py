@@ -129,3 +129,30 @@ def test_heartbeat_retries_a_forklift_that_never_got_a_path(monkeypatch):
         locks.release(n, "fl-01")
     locks.acquire("j3", "fl-02")
     assert traffic.retry_if_stuck("fl-01")              # stuck 45 s+ -> gives up with a reason
+
+
+def test_lost_path_is_resent_when_forklift_reports_idle(monkeypatch):
+    tables, locks, sent = install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_A"}])
+    traffic.start_route("fl-01", "slot_A4", "t1")
+    first = paths(sent, "fl-01")[-1]
+    traffic.retry_if_stuck("fl-01", "IDLE")                      # just sent: don't spam
+    assert len(paths(sent, "fl-01")) == 1
+    tables["FORKLIFTS_TABLE"].items["fl-01"]["window_sent_at"] = 1   # long ago, and forklift still IDLE
+    traffic.retry_if_stuck("fl-01", "DRIVING")                   # driving: it has the path
+    assert len(paths(sent, "fl-01")) == 1
+    traffic.retry_if_stuck("fl-01", "IDLE")                      # idle: message was lost -> re-send
+    assert len(paths(sent, "fl-01")) == 2 and paths(sent, "fl-01")[-1] == first
+
+
+def test_forklift_leaves_dead_end_after_job(monkeypatch):
+    tables, locks, sent = install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_B"},
+                                                {"forklift_id": "fl-02", "node": "dock_A"}])
+    locks.acquire("dock_B", "fl-01")
+    spot = traffic.park_if_dead_end("fl-01")
+    assert spot and traffic.GRAPH.nodes[spot].type == "junction" and spot != "j2"   # j2 is beside dock_B
+    assert tables["FORKLIFTS_TABLE"].items["fl-01"]["route_task"] == "park-fl-01"
+
+
+def test_single_forklift_site_does_not_park(monkeypatch):
+    install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_B"}])
+    assert traffic.park_if_dead_end("fl-01") is None

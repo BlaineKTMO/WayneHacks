@@ -57,9 +57,11 @@ def handler(msg, _ctx):
         traffic.renew(fid, parsed.node)
         # A forklift that couldn't reserve ANY of its route never got a path, so it never reports
         # "blocked" itself. Its 1 Hz telemetry is the heartbeat that retries / replans / gives up.
-        gave_up = traffic.retry_if_stuck(fid)
+        gave_up = traffic.retry_if_stuck(fid, parsed.state)
         if gave_up:
             on_task_event(fid, "fault", gave_up)
+        elif parsed.state == "IDLE":
+            resend_lost_step(fid)
     elif kind == "event":
         if parsed.type == "node_reached":
             traffic.on_node_reached(fid, parsed.node)
@@ -69,11 +71,27 @@ def handler(msg, _ctx):
                 return
             traffic.on_done(fid, parsed.node)
             on_task_event(fid, parsed.type)
-            mission.poke()
+            mission.poke()                    # free forklift: next mission move, if any...
+            traffic.park_if_dead_end(fid)     # ...otherwise don't idle on a dock or slot
         elif parsed.type == "blocked":
             gave_up = traffic.on_blocked(fid)
             if gave_up:
                 on_task_event(fid, "fault", gave_up)
+
+
+def resend_lost_step(fid: str) -> None:
+    """Idle mid-task with no route = its Pick/Drop message was lost. Throttled to every 4 s."""
+    item = table("FORKLIFTS_TABLE").get_item(Key={"forklift_id": fid}).get("Item") or {}
+    if not item.get("current_task") or item.get("route"):
+        return
+    now = now_ms()
+    if now - int(item.get("step_sent_at") or 0) < traffic.RESEND_AFTER_MS:
+        return
+    table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fid}, UpdateExpression="SET step_sent_at = :t",
+                                         ExpressionAttributeValues={":t": now})
+    if int(item.get("step_sent_at") or 0) == 0:
+        return   # first idle beat after the step started: give the forklift a moment
+    tree_runner.resend_step(fid, item["current_task"])
 
 
 def first_delivery(fid: str, ts: int) -> bool:

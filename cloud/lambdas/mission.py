@@ -31,6 +31,7 @@ from fleet_shared.messages import now_ms
 log = logging.getLogger()
 GRAPH = Graph.load()
 MAX_RETRIES = 8
+MAX_ATTEMPTS = 3   # a move that fails (e.g. gave up in traffic) is re-queued up to twice
 
 
 def _t():
@@ -189,7 +190,13 @@ def on_task_finished(task: dict, success: bool) -> None:
     def fn(m):
         for mv in m["moves"]:
             if mv["task_id"] == task["task_id"] and mv["state"] == "running":
-                mv["state"] = "done" if success else "failed"
+                if success:
+                    mv["state"] = "done"
+                elif mv.get("attempts", 1) < MAX_ATTEMPTS and m["status"] == "running":
+                    # congestion timeout etc.: put it back in the queue for another forklift/time
+                    mv.update(state="pending", task_id=None, forklift=None, attempts=mv.get("attempts", 1) + 1)
+                else:
+                    mv["state"] = "failed"
                 if all(x["state"] in ("done", "failed") for x in m["moves"]) and m["status"] == "running":
                     m["status"], m["finished_at"] = "done", now_ms()
                 return m

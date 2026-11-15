@@ -59,6 +59,7 @@ def _start_leaf(n: dict, ctx: Ctx) -> str:
                 n["error"] = f"{n['pallet']} is at {where}, forklift at {ctx.node}"
                 return "failure"
         here = GRAPH.nodes[ctx.node]
+        table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": ctx.fid}, UpdateExpression="REMOVE step_sent_at")
         path = Path(task_id=ctx.task_id, nodes=[{"id": here.id, "x": here.x, "y": here.y}],
                     action="pick" if t == "Pick" else "drop")
         publish(topics.path(ctx.fid), path.to_dict())
@@ -204,6 +205,25 @@ def start(task: dict, fid: str, tree: dict) -> None:
     ctx = Ctx(fid, task["task_id"])
     tick(tree, ctx)
     _save_and_report(task, tree, fid)
+
+
+def resend_step(fid: str, task_id: str) -> bool:
+    """The forklift is idle mid-task with no route: the Pick/Drop (single-node) path was lost.
+    Re-send that step. Returns True if something was re-sent."""
+    task = from_ddb(table("TASKS_TABLE").get_item(Key={"task_id": task_id}).get("Item") or {})
+    tree = task.get("tree")
+    if not tree or task.get("status") != "running":
+        return False
+    leaf = _running_leaf(tree)
+    if not leaf or leaf["type"] not in ("Pick", "Drop"):
+        return False
+    here = GRAPH.nodes.get(Ctx(fid, task_id).node)
+    if not here:
+        return False
+    log.warning("%s idle during %s: re-sending the step", fid, leaf["type"])
+    publish(topics.path(fid), Path(task_id=task_id, nodes=[{"id": here.id, "x": here.x, "y": here.y}],
+                                   action="pick" if leaf["type"] == "Pick" else "drop").to_dict())
+    return True
 
 
 def on_event(fid: str, task_id: str, event_type: str, error: str | None = None) -> None:
