@@ -11,14 +11,11 @@ from pathlib import Path
 import cv2
 
 from . import config
+from .localizer import open_camera
 
 
 def main():
-    cap = cv2.VideoCapture(config.CAMERA_INDEX)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
-    if not cap.isOpened():
-        raise SystemExit(f"Camera {config.CAMERA_INDEX} didn't open. Change CAMERA_INDEX in config.py.")
+    cap = open_camera()
     n = 0
     while True:
         ok, frame = cap.read()

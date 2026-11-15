@@ -16,3 +16,11 @@ edge/certs/
 # Recorded data
 edge/logs/
 *.mp4
+
+# Calibration scratch (camera.npz itself is kept: it belongs to this camera)
+edge/calibration/views.npz
+edge/calibration/coverage.jpg
+edge/calibration/table_map.npz
+
+# Bottlenose WiFi credentials (copy secrets.h.example)
+freewili/bottlenose/forklift_wifi/secrets.h

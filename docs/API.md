@@ -13,7 +13,7 @@ Every boundary in the system, in one place. If you build a component, build it a
 **Conventions (all interfaces)**
 
 - Units: metres, radians, seconds. Angles in −π..π, counter-clockwise from +x.
-- World frame: origin at corner tag 0, x right, y up, fixed by the 4 corner AprilTags.
+- World frame: origin at the bottom-left corner tag (tag 11, see `CORNER_TAGS` in edge config), x right, y up, fixed by the 4 corner AprilTags.
 - `ts`: epoch **milliseconds** (integer). Exception: DynamoDB TTL attributes are epoch **seconds** (an AWS requirement).
 - Forklift IDs: `fl-01`, `fl-02` (regex `^fl-\d{2}$`).
 - Node IDs: whatever `shared/warehouse.json` defines (`dock_A`, `j1`, `slot_A3`, …).
@@ -308,7 +308,8 @@ USB serial at 115200 baud, 8N1, ASCII. One message per line, ending in `\n` (`\r
 | Direction | Line | Meaning | Rate |
 |---|---|---|---|
 | laptop → FW | `W,<left>,<right>` | wheel speed, integers −100..100. Sign = direction | 20 Hz |
-| laptop → FW | `S,<reason>` | stop now. Reason has no commas | on demand |
+| laptop → FW | `F,<speed>,<ms>` | fork motor −100..100 (+ = up) for `ms` (0..5000), then it brakes by itself | on demand |
+| laptop → FW | `S,<reason>` | stop everything now. Reason has no commas | on demand |
 | FW → laptop | `T,<state>,<battery_v>` | state as in §2, volts with 2 decimals | 1 Hz |
 
 ```
@@ -321,7 +322,8 @@ USB serial at 115200 baud, 8N1, ASCII. One message per line, ending in `\n` (`\r
 
 **What the Free-WiLi must do:**
 
-- **Watchdog:** if no `W` arrives for **500 ms**, turn the motors off and set state to `STOPPED`.
+- **Watchdog:** while anything is moving, if no valid `W`, `F` or `S` arrives for **500 ms**, brake everything and set state to `STOPPED`. Keep sending `W` during a fork move.
+- **Fork:** never runs longer than 5000 ms per `F` (no end-stop switches).
 - `S` overrides any `W` until the next `W` arrives.
 - **Unknown lines:** ignore them and don't crash. Optionally reply `E,bad_line`.
 - Clamp values outside −100..100.
@@ -716,7 +718,7 @@ Also: `now_ms()`, `FORKLIFT_STATES`, `EVENT_TYPES`.
 | Module | Public API |
 |---|---|
 | `config` | all tunables; see the comments in the file |
-| `freewili_link` | `SerialLink()` / `SimLink()` with `.wheels(l, r)`, `.stop(reason)`, `.poll() -> FreeWiliTelemetry \| None`, `.close()`. Helpers: `format_wheels`, `format_stop`, `parse_line` |
+| `freewili_link` | `SerialLink()` / `SimLink()` with `.wheels(l, r)`, `.fork(speed, ms)`, `.stop(reason)`, `.poll() -> FreeWiliTelemetry \| None`, `.close()`. Helpers: `format_wheels`, `format_fork`, `format_stop`, `parse_line` |
 | `localizer` | `Camera().read()`; `TagDetector().detect(frame) -> [TagSighting]`; `Localizer().process(sightings) -> {fid: ForkliftPose}` (needs all 4 corner tags once, then keeps the last homography) |
 | `pure_pursuit` | `WaypointFollower(waypoints, loop=True)` with `.update(x, y, theta) -> (left, right)`, `.index`, `.laps`, `.finished`, `.target` |
 | `overlay` | `WorldCanvas`, `draw(img, canvas, pose, follower, status, ok)` |

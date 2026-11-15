@@ -47,19 +47,22 @@ Do these in order. Don't move on until the step's check passes.
 | **2. Lens calibration** | `uv run python -m fleet_edge.step2_calibrate` | Prints `reprojection error` under 1.0. Creates `edge/calibration/camera.npz`. |
 | **3. Tags** | `uv run python -m fleet_edge.step3_tags` | Says `map OK`. Put the forklift tag on a ruler-measured spot: screen matches within 1 cm. Arrow points the way the forklift faces (if not, fix `TAG_HEADING_OFFSET`). |
 | **4. Motors** | `uv run python -m fleet_edge.step4_motors` | w/a/s/d drives the forklift. Find the lowest speed that moves it, put it in `MIN_SPEED`. Unplug USB while driving → stops within 0.5 s. |
+| **4b. Drive with the camera** | `uv run python -m fleet_edge.drive_cam` | Live webcam view with tags, the forklift's outline and heading, the route, the pole and the camera border. Hold w/a/s/d to drive (stops when you let go); stops by itself if tag 13 is lost. `--radio` uses the radio base, `--video out.mp4` records. |
 | **5. Serial debug** | `uv run python -m fleet_edge.step5_serial_monitor` | Only when step 4 doesn't work: shows exactly what the Free-WiLi sends and receives. |
 | **6. Ring 1** | `uv run python -m fleet_edge.step6_ring1` | SPACE to go. 3 clean laps. Cover the tag → stops. **Record a backup video.** |
+
+**Before step 4:** the Free-WiLi OG needs the forklift firmware and the L298N wired. Follow [freewili/README.md](../freewili/README.md) sections 1–5 first.
 
 ### Printing tags
 
 - Family **tag36h11**. Download PNGs from https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag36h11
-- Corner tags: IDs **0, 1, 2, 3** at the table corners, matching `CORNER_TAGS` in `config.py`. Measure where you actually put them and update the numbers.
-- Forklift tag: ID **10** (= `fl-01`). Second forklift: ID **11**.
+- Corner tags: IDs **11** (bottom-left, the origin), **9** (bottom-right), **5** (top-right), **4** (top-left), matching `CORNER_TAGS` in `config.py`. Measure centre-to-centre with a ruler and update the numbers (currently 527 × 406 mm).
+- Forklift tag: ID **13** (= `fl-01`). Pick any unused ID for a second forklift and add it to `FORKLIFT_TAGS`.
 - Print at 100% scale, about 6 cm black square. Measure and set `TAG_SIZE_M`. Matte paper; glossy reflects the lights.
 
 ### Finding the Free-WiLi port
 
-Plug it in, then run `ls /dev/tty.usb*`. Put the result in `SERIAL_PORT` in `config.py`.
+Nothing to do: `SERIAL_PORT = "auto"` finds the OG main CPU by name. If that fails, the error lists the ports it saw. Put the right one in `SERIAL_PORT` in `config.py`.
 
 ## 2b. Connect to the cloud (after Ring 1 passes)
 
@@ -78,7 +81,7 @@ Pick/Drop: the bridge waits 0.5 s at the spot for now. When the fork servo works
 | Symptom | Try |
 |---|---|
 | Camera window is your face | `CAMERA_INDEX = 1` in config |
-| `need 4 corner tags` | More light (desk lamp), bigger tags, check IDs are 0–3 |
+| `need 4 corner tags` | More light (desk lamp), bigger tags, check the corner IDs match `CORNER_TAGS` |
 | Position jumps around | Lower `POSE_ALPHA` (e.g. 0.4) |
 | Forklift wobbles / zig-zags | Raise `LOOKAHEAD_M` (0.10–0.15), lower `MAX_SPEED` |
 | Spins forever at a waypoint | Raise `ARRIVE_RADIUS_M` to 0.05; check heading arrow direction in step 3 |

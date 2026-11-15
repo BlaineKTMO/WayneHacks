@@ -7,7 +7,7 @@ Ceiling cameras localize every forklift, the cloud plans routes and turns plain 
 | Folder | Owner | What | Status |
 |---|---|---|---|
 | [`edge/`](edge/START_HERE.md) | Hardware lead | Camera → AprilTags → pose → pure pursuit → Free-WiLi | Ring 1 scaffold, runs in `--sim` |
-| [`freewili/`](freewili/README.md) | Hardware lead | Motor firmware + watchdog | Spec only |
+| [`freewili/`](freewili/README.md) | Hardware lead | Free-WiLi OG firmware: L298N motors + watchdog | Written, not yet on hardware |
 | [`shared/`](shared/) | Both | MQTT topics, message types, `warehouse.json`, A* | Done, tested |
 | [`cloud/`](cloud/) | Cloud lead | CDK: DynamoDB, S3, IoT rules, Lambdas | Ring 2 deployed |
 | [`tools/`](tools/) | Both | `fake_fleet.py`: poke the cloud without hardware | Done |

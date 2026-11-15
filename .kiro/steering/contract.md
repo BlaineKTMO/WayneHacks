@@ -5,6 +5,6 @@ Full reference: `docs/API.md`. The source of truth is code: `shared/fleet_shared
 Additions beyond the architecture doc:
 - `fleet/{id}/goto` `{node, task_id?}`: dashboard → cloud, Ring 2 "click a node". The route planner Lambda answers with `fleet/{id}/path`.
 
-Serial protocol laptop ↔ Free-WiLi: `W,<l>,<r>` / `S,<reason>` / `T,<state>,<battery_v>` (see `edge/fleet_edge/freewili_link.py`).
+Serial protocol laptop ↔ Free-WiLi: `W,<l>,<r>` / `F,<speed>,<ms>` / `S,<reason>` / `T,<state>,<battery_v>` (see `edge/fleet_edge/freewili_link.py`).
 
 Changing the contract: update `shared/`, its tests, and this file in the same commit, and tell the other lead.

@@ -1,7 +1,8 @@
 """Talk to the Free-WiLi over USB serial using the Ring 1 text protocol.
 
   laptop -> Free-WiLi   W,<left>,<right>\\n     wheel speeds -100..100, sent at 20 Hz
-  laptop -> Free-WiLi   S,<reason>\\n           stop now
+  laptop -> Free-WiLi   F,<speed>,<ms>\\n       fork motor -100..100 (+ = up) for ms (max 5000)
+  laptop -> Free-WiLi   S,<reason>\\n           stop everything now
   Free-WiLi -> laptop   T,<state>,<battery_v>\\n telemetry at 1 Hz
 
 Two implementations with the same methods:
@@ -26,6 +27,13 @@ def format_wheels(left: float, right: float) -> str:
     return f"W,{clamp(left)},{clamp(right)}\n"
 
 
+FORK_MAX_MS = 5000   # the firmware caps fork runs here (no end-stop switches)
+
+
+def format_fork(speed: float, ms: int) -> str:
+    return f"F,{clamp(speed)},{int(max(0, min(FORK_MAX_MS, ms)))}\n"
+
+
 def format_stop(reason: str) -> str:
     return f"S,{reason.replace(',', ' ').replace(chr(10), ' ')}\n"
 
@@ -47,15 +55,42 @@ def parse_line(line: str) -> FreeWiliTelemetry | None:
     return None
 
 
+MAIN_CPU_PRODUCT = "FWOG main forklift"   # USB product string set by freewili/forklift firmware
+RADIO_BASE_PRODUCT = "FWOG main flbase"    # the radio base station OG (same lines, over 915 MHz)
+
+
+def find_port(products: tuple[str, ...] = (MAIN_CPU_PRODUCT, RADIO_BASE_PRODUCT)) -> str:
+    """Find the OG to talk to: the forklift itself on USB if it's plugged in, otherwise
+    the radio base station (it relays the same lines). Each OG shows up as TWO serial
+    ports (main and display CPU); only the main CPU's is the right one."""
+    from serial.tools import list_ports
+    ports = list(list_ports.comports())
+    for product in products:
+        for p in ports:
+            if p.product and product in p.product:
+                return p.device
+    seen = ", ".join(f"{p.device} ({p.product})" for p in ports) or "none"
+    raise RuntimeError(f"no forklift or radio base on USB (looked for {', '.join(products)}). "
+                       f"Firmware flashed and the Free-WiLi on? Ports seen: {seen}")
+
+
 class SerialLink:
     def __init__(self, port: str = config.SERIAL_PORT, baud: int = config.SERIAL_BAUD):
         import serial  # pyserial
-        self.ser = serial.Serial(port, baud, timeout=0)
+        if port == "auto":
+            port = find_port()
+        # "socket://forklift-01.local:5000" = over WiFi through the Bottlenose relay
+        # (freewili/bottlenose/); anything else is a USB serial device. Same lines either way.
+        self.ser = serial.serial_for_url(port, baudrate=baud, timeout=0)
         self._buf = b""
         self.last_telemetry: FreeWiliTelemetry | None = None
 
     def wheels(self, left: float, right: float) -> None:
         self.ser.write(format_wheels(left, right).encode())
+
+    def fork(self, speed: float, ms: int) -> None:
+        """Run the fork motor (+ = up) for ms, then it stops on its own."""
+        self.ser.write(format_fork(speed, ms).encode())
 
     def stop(self, reason: str) -> None:
         self.ser.write(format_stop(reason).encode())
@@ -93,7 +128,11 @@ class SimLink:
             return 0.0 if abs(cmd) < config.MIN_SPEED * 0.6 else cmd / 100 * self.top
         vl, vr = speed(self.left), speed(self.right)
         v, w = (vl + vr) / 2, (vr - vl) / config.WHEEL_BASE_M
+        # Like the real chassis, rotate about a point PIVOT_FWD_M ahead of the centre.
+        d = config.PIVOT_FWD_M
+        px, py = self.x + d * math.cos(self.theta), self.y + d * math.sin(self.theta)
         self.theta = (self.theta + w * dt + math.pi) % (2 * math.pi) - math.pi
+        self.x, self.y = px - d * math.cos(self.theta), py - d * math.sin(self.theta)
         self.x += v * math.cos(self.theta) * dt
         self.y += v * math.sin(self.theta) * dt
 
@@ -101,6 +140,9 @@ class SimLink:
         self._advance()
         self.left, self.right = clamp(left), clamp(right)
         self.state = "DRIVING" if (self.left or self.right) else "IDLE"
+
+    def fork(self, speed: float, ms: int) -> None:
+        pass   # the sim has no fork
 
     def stop(self, reason: str) -> None:
         self._advance()
