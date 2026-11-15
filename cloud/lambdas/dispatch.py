@@ -22,6 +22,7 @@ from common import from_ddb, publish, table, to_ddb
 from fleet_shared import topics
 from fleet_shared.behavior_tree import PRIMITIVES_DOC, TREE_TOOL_SCHEMA, first_target, validate, with_status
 from fleet_shared.graph import Graph
+from fleet_shared import rule_planner
 from fleet_shared.messages import TaskNew, TaskStatus, now_ms
 
 log = logging.getLogger()
@@ -147,9 +148,18 @@ def handler(msg, _ctx):
                 "content": [{"text": "Invalid tree:\n- " + "\n- ".join(errors) + "\nFix it and call submit_tree again."}]}}]})
         if errors:
             return fail("Invalid plan: " + "; ".join(errors[:3]))
-    except Exception as e:  # Bedrock outage, throttling, malformed reply
-        log.exception("planner error")
-        return fail(f"Planner unavailable: {type(e).__name__}")
+    except Exception as e:  # Bedrock outage, throttling, not enabled: fall back to rules
+        log.exception("LLM planner error; trying rule-based fallback")
+        tree = rule_planner.plan(order.text, GRAPH, pallets)
+        if tree is None:
+            return fail(f"AI planner unavailable ({type(e).__name__}) and the backup planner didn't understand the order")
+        planner = {**planner, "version": rule_planner.VERSION}
+        task["planner_version"] = planner["version"]
+        fl = pick_forklift(forklifts, first_target(tree))
+        errors = validate(tree, GRAPH, pallets, start_node=fl["node"] if fl else None,
+                          forklift_id=fl["forklift_id"] if fl else "fl-??")
+        if errors:
+            return fail("Invalid plan: " + "; ".join(errors[:3]))
 
     if fl is None:
         return fail("No free forklift available")

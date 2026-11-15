@@ -98,6 +98,9 @@ class Graph:
                 eid = edge_id(cur, nxt)
                 if eid in blocked:
                     continue
+                # Slots and docks are destinations, never shortcuts: don't drive through them.
+                if nxt != goal and self.nodes[nxt].type != "junction":
+                    continue
                 ng = cost + self.dist(cur, nxt) + penalty.get(eid, 0.0)
                 if ng < g.get(nxt, math.inf):
                     g[nxt] = ng

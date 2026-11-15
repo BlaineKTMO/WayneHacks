@@ -36,3 +36,14 @@ def test_pallets_on_real_nodes():
     g = Graph.load()
     for pallet, node in g.pallets.items():
         assert node in g.nodes, pallet
+
+
+def test_routes_never_pass_through_slots_or_docks():
+    g = Graph.load()
+    for a in g.nodes:
+        for b in g.nodes:
+            if a == b:
+                continue
+            route = g.astar(a, b)
+            assert route is not None, f"{a}->{b} unreachable"
+            assert all(g.nodes[n].type == "junction" for n in route[1:-1]), route

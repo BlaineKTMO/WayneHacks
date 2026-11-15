@@ -56,3 +56,14 @@ def test_with_status_marks_everything():
     t = with_status({"type": "Retry", "n": 2, "child": MOVE_3_TO_B})
     assert t["status"] == "pending" and t["attempts"] == 0
     assert all(c["status"] == "pending" for c in t["child"]["children"])
+
+
+def test_rule_planner():
+    from fleet_shared import rule_planner
+    t = rule_planner.plan("Move pallet 3 to dock B", G, PALLETS)
+    assert t == MOVE_3_TO_B
+    assert validate(t, G, PALLETS, start_node="dock_A") == []
+    swap = rule_planner.plan("Swap pallets 1 and 2", G, PALLETS)
+    assert validate(swap, G, PALLETS, start_node="dock_A") == []
+    assert rule_planner.plan("make me a sandwich", G, PALLETS) is None
+    assert rule_planner.plan("move pallet 9 to dock B", G, PALLETS) is None
