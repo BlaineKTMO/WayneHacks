@@ -81,6 +81,9 @@ class FleetStack(Stack):
             "PALLETS_TABLE": pallets.table_name,
             "PLANNERS_TABLE": planners.table_name,
             "EPISODES_TABLE": episodes.table_name,
+            # demo = 1.5 x 1 m map for the simulated fleet; table = the real tabletop.
+            # Switch without redeploying: uv run python cloud/scripts/use_map.py table
+            "WAREHOUSE_MAP": self.node.try_get_context("warehouse_map") or "demo",
             "DATA_BUCKET": bucket.bucket_name,
             "IOT_ENDPOINT": endpoint,
         }

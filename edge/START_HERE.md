@@ -72,9 +72,16 @@ Nothing to do: `SERIAL_PORT = "auto"` finds the OG main CPU by name. If that fai
 | **8. Device certificate** (once) | `uv run python cloud/scripts/create_edge_cert.py` | Creates `edge/certs/`. **Never** commit or share these files. |
 | **9. Bridge, real forklift** | `uv run python -m fleet_edge.bridge` | Click a spot on the dashboard: the real forklift drives there. Cover its tag: it stops, uncover: it carries on. |
 
-**Before step 9: turn the dashboard's "Simulated fleet" switch OFF**, or the cloud gets two `fl-01`s. Which Free-WiLi drives which forklift is `FORKLIFT_LINKS` in `config.py`.
+**Before step 9 (registration):** the cloud has two maps. The demo map is 1.5 × 1 m for the simulated fleet; the real table uses `shared/warehouse_table.json`, drawn inside the safe rectangle you measured for Ring 1. **Check those 6 nodes on the table first** (move them only inside x 0.12–0.42, y 0.14–0.20 unless you re-run the clearance search). Then:
 
-Pick/Drop: the bridge waits 0.5 s at the spot for now. When the fork servo works, add its command where `bridge.py` says `TODO(forks)`.
+```bash
+uv run python cloud/scripts/use_map.py table          # cloud uses the table map
+WAREHOUSE_MAP=table uv run python -m fleet_edge.bridge # bridge uses it too
+```
+
+Switch back with `use_map.py demo` when the simulated fleet drives. Pick/Drop now run the fork for `FORK_LIFT_MS` (config.py): measure a full lift and set it. The camera view streams to the website automatically (`CAMERA_STREAM_FPS`).
+
+**Also before step 9: turn the dashboard's "Simulated fleet" switch OFF**, or the cloud gets two `fl-01`s. Which Free-WiLi drives which forklift is `FORKLIFT_LINKS` in `config.py`.
 
 ## 3. When something goes wrong
 

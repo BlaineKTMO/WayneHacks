@@ -113,6 +113,7 @@ export default function Warehouse3D(props: Props) {
     const el = host.current!
     const { graph } = latest.current
     const W = graph.size.width, H = graph.size.height
+    const S = Math.max(W, H) / 1.5   // 1 = the 1.5 m demo map; ~0.34 for the real tabletop
 
     const renderer = new THREE.WebGLRenderer({ antialias: true })
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
@@ -123,26 +124,26 @@ export default function Warehouse3D(props: Props) {
 
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0xe9ebef)
-    scene.fog = new THREE.Fog(0xe9ebef, 3, 7)
+    scene.fog = new THREE.Fog(0xe9ebef, 3 * S + 0.5, 7 * S + 1)
     const camera = new THREE.PerspectiveCamera(38, 1, 0.01, 50)
-    camera.position.set(W / 2 - 0.2, 1.25, 0.95)
+    camera.position.set(W / 2 - 0.2 * S, 1.25 * S + 0.15, -H / 2 + 1.45 * S + 0.1)
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.target.set(W / 2, 0, -H / 2)
     controls.enableDamping = true
     controls.maxPolarAngle = Math.PI * 0.46
-    controls.minDistance = 0.4
-    controls.maxDistance = 3.2
+    controls.minDistance = 0.4 * S
+    controls.maxDistance = 3.2 * S + 0.5
     controls.autoRotate = true
     controls.autoRotateSpeed = 0.35
     controls.addEventListener('start', () => { controls.autoRotate = false })
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0xb8bcc6, 1.1))
     const sun = new THREE.DirectionalLight(0xffffff, 1.6)
-    sun.position.set(W / 2 + 0.6, 2.2, -H / 2 + 0.9)
+    sun.position.set(W / 2 + 0.6 * S, 2.2 * S + 0.4, -H / 2 + 0.9 * S)
     sun.target.position.set(W / 2, 0, -H / 2)
     sun.castShadow = true
     sun.shadow.mapSize.set(2048, 2048)
-    Object.assign(sun.shadow.camera, { left: -1.2, right: 1.2, top: 1.2, bottom: -1.2, near: 0.5, far: 5 })
+    Object.assign(sun.shadow.camera, { left: -1.2 * S - 0.2, right: 1.2 * S + 0.2, top: 1.2 * S + 0.2, bottom: -1.2 * S - 0.2, near: 0.1, far: 5 })
     sun.shadow.bias = -0.0005
     scene.add(sun, sun.target)
 
@@ -197,10 +198,11 @@ export default function Warehouse3D(props: Props) {
     const camBody = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.04, 0.05), new THREE.MeshStandardMaterial({ color: 0x1d1d1f, roughness: 0.4 }))
     const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.25), new THREE.MeshStandardMaterial({ color: 0x8b93a3 }))
     pole.position.y = 0.14; camRig.add(camBody, pole)
-    camRig.position.set(W / 2, 0.95, -H / 2); scene.add(camRig)
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.95, 0.93, 4, 1, true),
+    const camH = 0.95 * S + 0.12
+    camRig.position.set(W / 2, camH, -H / 2); scene.add(camRig)
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(Math.max(W, H) * 0.65, camH - 0.02, 4, 1, true),
       new THREE.MeshBasicMaterial({ color: 0x0071e3, transparent: true, opacity: 0.05, side: THREE.DoubleSide, depthWrite: false }))
-    cone.rotation.y = Math.PI / 4; cone.position.set(W / 2, 0.47, -H / 2); scene.add(cone)
+    cone.rotation.y = Math.PI / 4; cone.position.set(W / 2, camH / 2, -H / 2); scene.add(cone)
     const coneEdges = new THREE.LineSegments(new THREE.EdgesGeometry(cone.geometry), new THREE.LineBasicMaterial({ color: 0x0071e3, transparent: true, opacity: 0.25 }))
     coneEdges.rotation.copy(cone.rotation); coneEdges.position.copy(cone.position); scene.add(coneEdges)
 

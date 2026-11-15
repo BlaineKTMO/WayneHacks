@@ -61,3 +61,18 @@ def test_safety_guard_stops_and_resumes():
     assert g.update(pose, ahead, h) == "clear"
     h.on_detections({"model_version": "virtual-demo", "objects": [{"cls": "person", "x": 0.65, "y": 0.6}]})
     assert g.update(pose, ahead, h) is None            # far from the path: keep driving
+
+
+def test_table_map_is_valid_and_inside_the_safe_rectangle(monkeypatch):
+    monkeypatch.setenv("WAREHOUSE_MAP", "table")
+    g = Graph.load()
+    assert "j1" in g.nodes and g.data["size"]["width"] < 1
+    for n in g.nodes.values():   # Ring 1 clearance search: x 0.12-0.42, y 0.14-0.20
+        assert 0.12 <= n.x <= 0.42 and 0.14 <= n.y <= 0.20, n
+    for a in g.nodes:
+        for b in g.nodes:
+            if a != b:
+                r = g.astar(a, b)
+                assert r and all(g.nodes[n].type == "junction" for n in r[1:-1])
+    for p, node in g.pallets.items():
+        assert node in g.nodes

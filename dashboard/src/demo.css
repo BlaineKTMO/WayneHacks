@@ -156,3 +156,40 @@ p.d-hint { margin: -4px 4px 10px; }
 .d-cam { margin-top: 16px; border-radius: 14px; }
 .d-cam .cam-head { background: var(--bg); }
 .d-cam .cam-empty { background: var(--panel-2); color: var(--muted); }
+
+/* architecture */
+.arch { margin-top: 36px; --c-truck: #e08a00; --c-edge: #1a9e5f; --c-aws: #0071e3; --c-client: #7a4dff; }
+.arch .g-truck { --c: var(--c-truck); } .arch .g-edge { --c: var(--c-edge); } .arch .g-aws { --c: var(--c-aws); } .arch .g-client { --c: var(--c-client); }
+.arch-tabs { display: inline-flex; flex-wrap: wrap; gap: 4px; background: var(--bg); border-radius: 14px; padding: 4px; }
+.arch-tabs button { min-height: 40px; padding: 0 16px; border: 0; border-radius: 10px; background: transparent; font: inherit; font-size: 15px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.arch-tabs button.on { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.arch-scroll { margin-top: 16px; overflow-x: auto; border-radius: 22px; background: var(--bg); -webkit-overflow-scrolling: touch; }
+.arch-svg { display: block; width: 100%; min-width: 860px; height: auto; font-family: inherit; }
+.arch-group rect { fill: color-mix(in srgb, var(--c) 6%, transparent); stroke: color-mix(in srgb, var(--c) 35%, transparent); stroke-width: 1.2; stroke-dasharray: 5 5; }
+.arch-group text { fill: var(--c); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.arch-node { cursor: pointer; transition: opacity .25s; }
+.arch-node rect { fill: #fff; stroke: color-mix(in srgb, var(--c) 30%, var(--line)); stroke-width: 1.2; filter: drop-shadow(0 2px 6px rgba(0,0,0,.06)); transition: stroke .2s; }
+.arch-node:hover rect, .arch-node.sel rect { stroke: var(--c); stroke-width: 2; }
+.arch-node:focus { outline: none; } .arch-node:focus-visible rect { stroke: var(--c); stroke-width: 2.5; }
+.arch-node.dim { opacity: .28; }
+.arch-icon-bg { fill: color-mix(in srgb, var(--c) 14%, #fff); }
+.arch-icon { fill: var(--c); font-size: 13px; font-weight: 700; }
+.arch-title { fill: var(--text); font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+.arch-tech { font-size: 11px; line-height: 1.3; color: var(--muted); font-family: var(--mono); }
+.arch-edge path { fill: none; stroke: #b9b9c0; stroke-width: 1.6; transition: stroke .25s, opacity .25s; }
+.arch-arrowhead { fill: #9a9aa2; }
+.arch-edge.off { opacity: .12; }
+.arch-edge.live path { stroke: var(--info); stroke-width: 2.4; stroke-dasharray: 7 6; animation: arch-flow 0.9s linear infinite; }
+.arch-edge.live rect { fill: #fff; stroke: color-mix(in srgb, var(--info) 40%, transparent); }
+.arch-edge.live text { fill: var(--info); font-size: 11px; font-weight: 600; font-family: var(--mono); }
+.flow-learn .arch-edge.live path { stroke: #7a4dff; } .flow-learn .arch-edge.live text { fill: #7a4dff; }
+.flow-pose .arch-edge.live path { stroke: var(--ok); } .flow-pose .arch-edge.live text { fill: var(--ok); }
+@keyframes arch-flow { to { stroke-dashoffset: -13; } }
+@media (prefers-reduced-motion: reduce) { .arch-edge.live path { animation: none; } }
+.arch-detail { margin-top: 16px; background: var(--bg); border-radius: 18px; padding: 18px 22px; min-height: 92px; }
+.arch-detail b { font-size: 19px; color: var(--c); margin-right: 10px; }
+.arch-detail-tech { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.arch-detail p { margin: 8px 0 0; color: var(--text); font-size: 16px; line-height: 1.5; }
+.arch-detail ol { margin: 0; padding-left: 22px; color: var(--text); font-size: 16px; line-height: 1.55; }
+.arch-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 14px; font-size: 14px; color: var(--muted); }
+.arch-legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--c); margin-right: 7px; vertical-align: -1px; }

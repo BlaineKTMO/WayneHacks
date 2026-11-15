@@ -21,7 +21,10 @@ Ceiling cameras localize every forklift, the cloud plans routes and turns plain 
 1. iPad: open **https://main.d2ixq5egzkgfpj.amplifyapp.com/demo** and sign in once (session persists).
 2. No hardware yet? Flip **Simulated fleet: On** on the demo page (AWS-hosted forklifts, ~1 min to boot).
    Turn it **Off** when real forklifts drive. Never run it and `tools/sim_fleet.py` at the same time.
-3. Pre-flight: `uv run python tools/e2e.py --cloud-sim` → must say `29/29 checks passed`.
+3. Pre-flight: `uv run python tools/e2e.py --cloud-sim` → must say `36/36 checks passed`.
+4. Real forklift instead? `uv run python cloud/scripts/use_map.py table`, sim **Off**, then on the edge laptop
+   `WAREHOUSE_MAP=table uv run python -m fleet_edge.bridge`. Back to the sim: `use_map.py demo`.
+5. Between judges: **Reset demo** (bottom of /demo).
 
 ## Setup
 

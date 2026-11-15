@@ -20,7 +20,8 @@ def stage_lambda_code() -> Path:
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copytree(ROOT / "shared" / "fleet_shared", BUILD / "fleet_shared",
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    shutil.copy(ROOT / "shared" / "warehouse.json", BUILD / "fleet_shared" / "warehouse.json")
+    for name in ("warehouse.json", "warehouse_table.json"):
+        shutil.copy(ROOT / "shared" / name, BUILD / "fleet_shared" / name)
     return BUILD
 
 

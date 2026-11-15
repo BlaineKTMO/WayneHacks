@@ -73,6 +73,7 @@ Payloads are UTF-8 JSON objects. Publish with QoS 1 unless noted. Build topics a
 | [`fleet/{id}/stop`](#fleetidstop) | edge or cloud → forklift | on demand | ✅ cloud/dashboard · 📐 edge safety-guard |
 | [`warehouse/detections`](#warehousedetections) | edge → cloud | 2 Hz | 📐 |
 | [`warehouse/locks`](#warehouselocks) | cloud → dashboard | on change | ✅ |
+| `warehouse/camera` | edge → dashboard | ~4 fps | ✅ raw JPEG bytes (not JSON), ≤ 110 KB, from `bridge.py` |
 | [`tasks/new`](#tasksnew) | dashboard → cloud | on demand | ✅ (records only) |
 | [`tasks/{task_id}/status`](#taskstask_idstatus) | cloud → dashboard | on change | ✅ |
 | [`tasks/{task_id}/shadow`](#taskstask_idshadow) | cloud → dashboard | on change | 📐 |
@@ -345,6 +346,8 @@ The edge `fleet-bridge` turns `fleet/{id}/path` into `R` and `E` back into `flee
 ---
 
 ## 4. Warehouse graph file ✅
+
+Two maps: `shared/warehouse.json` (1.5 × 1 m demo map, simulated fleet) and `shared/warehouse_table.json` (the real tabletop, registered to the corner-tag frame). `WAREHOUSE_MAP=table|demo` picks one everywhere; `cloud/scripts/use_map.py` switches the cloud.
 
 `shared/warehouse.json` is the single source for the map. The cloud planner, edge, dashboard and simulator all load it. It **must match the printed floor map**.
 

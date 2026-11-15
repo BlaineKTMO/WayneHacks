@@ -7,6 +7,7 @@ import { PlannerLab } from './PlannerLab'
 import { PlanView } from './PlanView'
 import { SimSwitch } from './SimSwitch'
 import { CameraFeed } from './CameraFeed'
+import { Architecture } from './Architecture'
 import { useFleet } from './useFleet'
 import { unitColour, WarehouseMap } from './WarehouseMap'
 import './demo.css'
@@ -82,7 +83,7 @@ function Page({ cfg }: { cfg: Config }) {
       <nav className="d-nav">
         <a href="#top" className="d-logo">Overhead</a>
         <div className="d-links">
-          <a href="#live">Live</a><a href="#how">How it works</a><a href="#safety">Safety</a><a href="#learning">Learning</a><a href="#faq">FAQ</a>
+          <a href="#live">Live</a><a href="#how">How it works</a><a href="#architecture">Architecture</a><a href="#safety">Safety</a><a href="#learning">Learning</a><a href="#faq">FAQ</a>
         </div>
         <a className="d-nav-cta" href="#live">Try it</a>
       </nav>
@@ -200,6 +201,13 @@ function Page({ cfg }: { cfg: Config }) {
             <div key={t} className="d-step"><span className="d-step-n">{i + 1}</span><b>{t}</b><p>{d}</p></div>
           ))}
         </div>
+      </section>
+
+      {/* ------------------------------------------------ architecture */}
+      <section id="architecture" className="d-section alt">
+        <h2>Under the hood.<br /><span>Every part, every wire.</span></h2>
+        <p className="d-sub">Four places, one message bus. Pick a flow to trace it, or tap any box to see what it does.</p>
+        <Architecture />
       </section>
 
       {/* ------------------------------------------------ safety */}

@@ -1,0 +1,22 @@
+{
+  "_comment": "REAL TABLE map (registration). World frame = corner tags in edge/fleet_edge/config.py (origin tag 11, metres). Every node sits inside the safe rectangle x 0.12-0.42, y 0.14-0.20 measured for Ring 1 (tag stays inside the camera border, chassis clears the pole at ~(0.22, 0.38) and the corner tags). DRAFT: verify on the table before demoing; move nodes only within that rectangle unless you re-run the clearance search.",
+  "size": {"width": 0.51, "height": 0.38},
+  "nodes": [
+    {"id": "dock_A",  "x": 0.12, "y": 0.14, "type": "dock"},
+    {"id": "j1",      "x": 0.27, "y": 0.14, "type": "junction"},
+    {"id": "slot_A1", "x": 0.42, "y": 0.14, "type": "slot"},
+    {"id": "dock_B",  "x": 0.12, "y": 0.20, "type": "dock"},
+    {"id": "j2",      "x": 0.27, "y": 0.20, "type": "junction"},
+    {"id": "slot_A2", "x": 0.42, "y": 0.20, "type": "slot"}
+  ],
+  "edges": [
+    {"from": "dock_A", "to": "j1", "bidirectional": true},
+    {"from": "j1", "to": "slot_A1", "bidirectional": true},
+    {"from": "dock_B", "to": "j2", "bidirectional": true},
+    {"from": "j2", "to": "slot_A2", "bidirectional": true},
+    {"from": "j1", "to": "j2", "bidirectional": true}
+  ],
+  "pallets": [
+    {"id": "pallet_1", "node": "slot_A1"}
+  ]
+}
