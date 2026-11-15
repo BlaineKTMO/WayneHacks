@@ -74,5 +74,5 @@ def test_table_map_is_valid_and_inside_the_safe_rectangle(monkeypatch):
             if a != b:
                 r = g.astar(a, b)
                 assert r and all(g.nodes[n].type == "junction" for n in r[1:-1])
-    for p, node in g.pallets.items():
+    for node in g.pallets.values():
         assert node in g.nodes

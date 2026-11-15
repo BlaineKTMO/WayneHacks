@@ -116,7 +116,7 @@ export function Notes() {
 
 // ---------------------------------------------------------------- scaling animation
 const FLEET = 12
-const COLS = 5, ROWS = 2                       // ceiling camera grid (matches DEFAULTS.zones = 10)
+const COLS = 5, GRID_ROWS = 2                      // ceiling camera grid (matches DEFAULTS.zones = 10)
 const FW = 300, FH = 170
 const spot = (i: number) => ({ x: 34 + (i % 4) * 72, y: 30 + Math.floor(i / 4) * 54 })
 
@@ -125,8 +125,8 @@ function Floor({ n, mode }: { n: number; mode: 'a' | 'b' }) {
     <svg viewBox={`0 0 ${FW} ${FH}`} className={`sa-floor sa-${mode}`} aria-hidden>
       <rect x={1} y={1} width={FW - 2} height={FH - 2} rx={12} className="sa-bg" />
       {[0, 1, 2].map((r) => <line key={r} x1={14} x2={FW - 14} y1={46 + r * 54} y2={46 + r * 54} className="sa-lane" />)}
-      {mode === 'b' && Array.from({ length: COLS * ROWS }, (_, i) => {
-        const w = (FW - 16) / COLS, h = (FH - 16) / ROWS, cx = 8 + (i % COLS) * w, cy = 8 + Math.floor(i / COLS) * h
+      {mode === 'b' && Array.from({ length: COLS * GRID_ROWS }, (_, i) => {
+        const w = (FW - 16) / COLS, h = (FH - 16) / GRID_ROWS, cx = 8 + (i % COLS) * w, cy = 8 + Math.floor(i / COLS) * h
         return <g key={i}><rect x={cx + 2} y={cy + 2} width={w - 4} height={h - 4} rx={8} className="sa-zone" style={{ animationDelay: `${i * 60}ms` }} />
           <circle cx={cx + w / 2} cy={cy + 9} r={3.2} className="sa-camdot" /></g>
       })}
