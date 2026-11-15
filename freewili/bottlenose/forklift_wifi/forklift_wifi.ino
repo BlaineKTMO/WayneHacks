@@ -42,7 +42,7 @@ static const uint8_t OG_ADDR = 0x42;         /* WIFI_LINK_ADDR in wifi_link.h */
 static const uint32_t I2C_HZ = 400000;
 static const uint32_t POLL_MS = 20;           /* read telemetry from the OG this often */
 static const uint32_t IP_EVERY_MS = 2000;     /* re-send the IP so a rebooted OG shows it */
-static const size_t LINE_MAX = 64;            /* PROTO_LINE_MAX on the OG */
+static const size_t RELAY_LINE_MAX = 64;            /* PROTO_LINE_MAX on the OG */
 static const size_t I2C_CHUNK = 32;
 
 /* ESP32-C6 GPIOs worth trying for the Qwiic port. Skipped: 12/13 (USB), 16/17 (UART0
@@ -53,7 +53,7 @@ static WiFiServer server(TCP_PORT);
 static WiFiClient client;
 static Preferences prefs;
 static int sda_pin = -1, scl_pin = -1;
-static char line[LINE_MAX + 2];
+static char line[RELAY_LINE_MAX + 2];
 static size_t line_len = 0;
 static bool line_overflow = false;
 static uint32_t last_poll = 0, last_ip = 0;
@@ -143,7 +143,7 @@ static void pump_client(void) {
             }
             line_len = 0;
             line_overflow = false;
-        } else if (line_len < LINE_MAX) {
+        } else if (line_len < RELAY_LINE_MAX) {
             line[line_len++] = c;
         } else {
             line_overflow = true;   /* drop over-long lines whole, like the OG does */
