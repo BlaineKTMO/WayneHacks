@@ -55,8 +55,8 @@ Do these in order. Don't move on until the step's check passes.
 ### Printing tags
 
 - Family **tag36h11**. Download PNGs from https://github.com/AprilRobotics/apriltag-imgs/tree/master/tag36h11
-- Corner tags: IDs **0, 1, 2, 3** at the table corners, matching `CORNER_TAGS` in `config.py`. Measure where you actually put them and update the numbers.
-- Forklift tag: ID **10** (= `fl-01`). Second forklift: ID **11**.
+- Corner tags: IDs **11** (bottom-left, the origin), **9** (bottom-right), **5** (top-right), **4** (top-left), matching `CORNER_TAGS` in `config.py`. Measure centre-to-centre with a ruler and update the numbers (currently 527 × 406 mm).
+- Forklift tag: ID **13** (= `fl-01`). Pick any unused ID for a second forklift and add it to `FORKLIFT_TAGS`.
 - Print at 100% scale, about 6 cm black square. Measure and set `TAG_SIZE_M`. Matte paper; glossy reflects the lights.
 
 ### Finding the Free-WiLi port
@@ -68,7 +68,7 @@ Nothing to do: `SERIAL_PORT = "auto"` finds the OG main CPU by name. If that fai
 | Symptom | Try |
 |---|---|
 | Camera window is your face | `CAMERA_INDEX = 1` in config |
-| `need 4 corner tags` | More light (desk lamp), bigger tags, check IDs are 0–3 |
+| `need 4 corner tags` | More light (desk lamp), bigger tags, check the corner IDs match `CORNER_TAGS` |
 | Position jumps around | Lower `POSE_ALPHA` (e.g. 0.4) |
 | Forklift wobbles / zig-zags | Raise `LOOKAHEAD_M` (0.10–0.15), lower `MAX_SPEED` |
 | Spins forever at a waypoint | Raise `ARRIVE_RADIUS_M` to 0.05; check heading arrow direction in step 3 |

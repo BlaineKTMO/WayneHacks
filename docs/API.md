@@ -13,7 +13,7 @@ Every boundary in the system, in one place. If you build a component, build it a
 **Conventions (all interfaces)**
 
 - Units: metres, radians, seconds. Angles in −π..π, counter-clockwise from +x.
-- World frame: origin at corner tag 0, x right, y up, fixed by the 4 corner AprilTags.
+- World frame: origin at the bottom-left corner tag (tag 11, see `CORNER_TAGS` in edge config), x right, y up, fixed by the 4 corner AprilTags.
 - `ts`: epoch **milliseconds** (integer). Exception: DynamoDB TTL attributes are epoch **seconds** (an AWS requirement).
 - Forklift IDs: `fl-01`, `fl-02` (regex `^fl-\d{2}$`).
 - Node IDs: whatever `shared/warehouse.json` defines (`dock_A`, `j1`, `slot_A3`, …).
