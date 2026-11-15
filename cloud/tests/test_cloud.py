@@ -40,3 +40,39 @@ def test_api_routes(monkeypatch):
     r = api.handler({"routeKey": "GET /forklifts"}, None)
     assert r["body"].index("fl-01") < r["body"].index("fl-02")
     assert api.handler({"routeKey": "GET /nope"}, None)["statusCode"] == 404
+
+
+def test_shadow_planner_scored_and_counted(monkeypatch):
+    import dispatch
+    from fakes import FakeTable
+    from fleet_shared.sim import simulate
+    from fleet_shared.graph import Graph
+
+    g = Graph.load()
+    pallets = {"pallet_3": "slot_A3"}
+    fl = {"forklift_id": "fl-01", "node": "dock_A"}
+    good = {"type": "Sequence", "children": [{"type": "GoTo", "node": "slot_A3"}, {"type": "Pick", "pallet": "pallet_3"},
+                                             {"type": "GoTo", "node": "dock_B"}, {"type": "Drop", "slot": "dock_B"}]}
+    snap = dispatch.sim_snapshot(fl, pallets, [fl])
+    prod_cost = simulate({"type": "Sequence", "children": [{"type": "GoTo", "node": "slot_A4"}] + good["children"]}, snap, g).cost
+
+    planners = FakeTable("version", [{"version": "v2", "stage": "shadow"}])
+    planners.update_item = lambda **kw: planners.items["v2"].update(counted=True)
+    sent = []
+    monkeypatch.setattr(dispatch, "table", lambda name: planners)
+    monkeypatch.setattr(dispatch, "publish", lambda t, p: sent.append((t, p)))
+    monkeypatch.setattr(dispatch, "make_plan", lambda *a, **k: (good, fl))
+    res = dispatch.run_shadows({"task_id": "t9"}, [{"version": "v2"}], "move pallet 3 to dock B", pallets, [fl], prod_cost, snap)
+    assert res[0]["win"] and res[0]["sim_cost"] < prod_cost
+    assert sent[0][0] == "tasks/t9/shadow" and planners.items["v2"]["counted"]
+
+
+def test_pick_forklift_availability():
+    import dispatch
+    now = dispatch.now_ms()
+    fl = [{"forklift_id": "fl-01", "node": "dock_A", "state": "STOPPED", "last_seen": now},      # stopped, no task: OK
+          {"forklift_id": "fl-02", "node": "j6", "state": "DRIVING", "last_seen": now},          # telemetry lag: OK
+          {"forklift_id": "fl-03", "node": "j1", "state": "IDLE", "current_task": "t1", "last_seen": now},
+          {"forklift_id": "fl-04", "node": "j2", "state": "FAULT", "last_seen": now}]
+    pool = {dispatch.pick_forklift([f], "slot_A3") and f["forklift_id"] for f in fl} - {None}
+    assert pool == {"fl-01", "fl-02"}

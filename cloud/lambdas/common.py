@@ -8,6 +8,14 @@ import boto3
 
 _ddb = boto3.resource("dynamodb")
 _iot = None
+_s3 = None
+
+
+def s3():
+    global _s3
+    if _s3 is None:
+        _s3 = boto3.client("s3")
+    return _s3
 
 
 def table(env_name: str):
@@ -30,9 +38,9 @@ def from_ddb(obj):
     return obj
 
 
-def publish(topic: str, payload: dict | str) -> None:
+def publish(topic: str, payload: dict | str, retain: bool = False) -> None:
     global _iot
     if _iot is None:
         _iot = boto3.client("iot-data", endpoint_url=f"https://{os.environ['IOT_ENDPOINT']}")
     body = payload if isinstance(payload, str) else json.dumps(payload)
-    _iot.publish(topic=topic, qos=1, payload=body.encode())
+    _iot.publish(topic=topic, qos=1, retain=retain, payload=body.encode())

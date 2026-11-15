@@ -3,18 +3,37 @@ import mqtt, { type MqttClient } from 'mqtt'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, signedMqttUrl } from './aws'
 import type { Config } from './config'
-import type { FleetEvent, Forklift, Graph, Path, Pose, Task, TaskStatus, Telemetry } from './types'
+import type { FleetEvent, Forklift, Graph, LogEntry, Path, Pose, Task, TaskStatus, Telemetry } from './types'
 
 export type Conn = 'connecting' | 'live' | 'offline'
+type ForkliftRow = {
+  forklift_id: string; pose?: Pose; state?: Forklift['state']; battery_v?: number
+  node?: string | null; last_event?: string; current_task?: string | null
+}
+const TRAIL_LEN = 40
+const LOG_LEN = 200
 
 export function useFleet(cfg: Config) {
   const [graph, setGraph] = useState<Graph>()
   const [forklifts, setForklifts] = useState<Record<string, Forklift>>({})
+  const [trails, setTrails] = useState<Record<string, [number, number][]>>({})
   const [tasks, setTasks] = useState<Task[]>([])
   const [pallets, setPallets] = useState<Record<string, string>>({})
+  const [log, setLog] = useState<LogEntry[]>([])
+  const [stops, setStops] = useState(0)
+  const [locks, setLocks] = useState<Record<string, string>>({})
+  const [people, setPeople] = useState<{ x: number; y: number }[]>([])
+  const [labTick, setLabTick] = useState(0)  // bumps when shadow/outcome/promotion data changes
   const [conn, setConn] = useState<Conn>('connecting')
   const [error, setError] = useState<string>()
   const client = useRef<MqttClient | null>(null)
+  const logId = useRef(0)
+  const lastPose = useRef<Record<string, Pose & { at: number }>>({})
+  const lastState = useRef<Record<string, string | undefined>>({})
+  const refreshPallets = useRef<() => void>(undefined)
+
+  const addLog = (level: LogEntry['level'], text: string, unit?: string) =>
+    setLog((l) => [{ id: ++logId.current, ts: Date.now(), level, unit, text }, ...l].slice(0, LOG_LEN))
 
   const patchForklift = (id: string, patch: Partial<Forklift>) =>
     setForklifts((f) => ({ ...f, [id]: { ...f[id], id, ...patch } }))
@@ -22,14 +41,14 @@ export function useFleet(cfg: Config) {
   const upsertTask = (t: Task) =>
     setTasks((ts) => {
       const i = ts.findIndex((x) => x.task_id === t.task_id)
-      if (i < 0) return [t, ...ts].slice(0, 50)
+      if (i < 0) return [{ created_at: Date.now(), ...t }, ...ts].slice(0, 50)
       const next = [...ts]
-      next[i] = { ...next[i], ...t }
+      next[i] = { ...next[i], ...Object.fromEntries(Object.entries(t).filter(([, v]) => v != null)) }
       return next
     })
 
   const onMessage = useCallback((topic: string, raw: Uint8Array) => {
-    let msg: unknown
+    let msg: any // eslint-disable-line @typescript-eslint/no-explicit-any -- MQTT JSON, narrowed per topic below
     try {
       msg = JSON.parse(new TextDecoder().decode(raw))
     } catch {
@@ -40,14 +59,45 @@ export function useFleet(cfg: Config) {
     if (p[0] === 'fleet') {
       const id = p[1]
       switch (p[2]) {
-        case 'pose':
-          return patchForklift(id, { pose: msg as Pose, lastSeen: now })
+        case 'pose': {
+          const pose = msg as Pose
+          const prev = lastPose.current[id]
+          let speed: number | undefined
+          if (prev && now - prev.at > 0) {
+            const inst = Math.hypot(pose.x - prev.x, pose.y - prev.y) / ((now - prev.at) / 1000)
+            speed = inst
+          }
+          lastPose.current[id] = { ...pose, at: now }
+          setTrails((t) => {
+            const tr = t[id] ?? []
+            const last = tr[tr.length - 1]
+            if (last && Math.hypot(last[0] - pose.x, last[1] - pose.y) < 0.01) return t
+            return { ...t, [id]: [...tr, [pose.x, pose.y] as [number, number]].slice(-TRAIL_LEN) }
+          })
+          return setForklifts((f) => {
+            const old = f[id]?.speed ?? 0
+            const s = speed === undefined ? old : old * 0.7 + speed * 0.3
+            return { ...f, [id]: { ...f[id], id, pose, lastSeen: now, speed: s } }
+          })
+        }
         case 'telemetry': {
           const t = msg as Telemetry
+          if (lastState.current[id] !== t.state) {
+            if (lastState.current[id] !== undefined)
+              addLog(t.state === 'STOPPED' || t.state === 'FAULT' ? 'error' : t.state === 'BLOCKED' ? 'warn' : 'info',
+                `State ${lastState.current[id]} → ${t.state}`, id)
+            lastState.current[id] = t.state
+          }
           return patchForklift(id, { state: t.state, battery_v: t.battery_v, node: t.node, lastSeen: now })
         }
         case 'event': {
           const e = msg as FleetEvent
+          if (e.type === 'node_reached') addLog('info', `Reached ${e.node}`, id)
+          if (e.type === 'done') addLog('ok', `Task complete at ${e.node}`, id)
+          if (e.type === 'blocked') addLog('warn', `Blocked at ${e.node}, waiting for lane`, id)
+          if (e.type === 'fault') addLog('error', `Fault at ${e.node ?? 'unknown'}`, id)
+          if (e.type === 'safety_stop') { setStops((s) => s + 1); addLog('error', 'SAFETY STOP: person in path', id) }
+          if (e.type === 'safety_clear') addLog('ok', 'Path clear, resuming', id)
           return patchForklift(id, {
             lastEvent: e.type,
             ...(e.node ? { node: e.node } : {}),
@@ -56,17 +106,53 @@ export function useFleet(cfg: Config) {
         }
         case 'path': {
           const path = msg as Path
+          addLog('info', `Route assigned: ${path.nodes.map((n) => n.id).join(' → ')}`, id)
           return patchForklift(id, { path, currentTask: path.task_id })
+        }
+        case 'stop': {
+          setStops((s) => s + 1)
+          addLog('error', `SAFETY STOP: ${msg.reason}`, id)
+          return patchForklift(id, { path: undefined })
         }
       }
     }
+    if (p[0] === 'tasks' && p[2] === 'shadow') {
+      const r = msg as { planner_version: string; sim_cost: number; prod_sim_cost: number; win: boolean; valid: boolean }
+      addLog(r.win ? 'ok' : 'info', `Shadow ${r.planner_version}: ${r.valid ? r.sim_cost : 'invalid plan'} vs prod ${r.prod_sim_cost}${r.win ? ' (candidate wins)' : ''}`)
+      setLabTick((n) => n + 1)
+      return
+    }
+    if (p[0] === 'tasks' && p[2] === 'outcome') {
+      const o = msg as { success: boolean; cost: number; duration_s: number }
+      addLog(o.success ? 'ok' : 'error', `Episode graded: cost ${o.cost}, ${o.duration_s}s`)
+      setLabTick((n) => n + 1)
+      return
+    }
+    if (topic === 'planners/promoted') {
+      addLog('ok', `Planner ${msg.version} promoted to production (was ${msg.previous ?? 'none'})`)
+      setLabTick((n) => n + 1)
+      return
+    }
+    if (topic === 'warehouse/detections') {
+      const objs = (msg.objects ?? []) as { cls: string; x: number; y: number }[]
+      setPeople(objs.filter((o) => o.cls === 'person' || o.cls === 'obstacle').map((o) => ({ x: o.x, y: o.y })))
+      return
+    }
+    if (topic === 'warehouse/locks') {
+      setLocks((msg as { locks: Record<string, string> }).locks ?? {})
+      return
+    }
     if (p[0] === 'tasks' && p[2] === 'status') {
       const s = msg as TaskStatus
-      upsertTask({ task_id: p[1], status: s.state, assigned_to: s.assigned_to, error: s.error })
+      upsertTask({ task_id: p[1], status: s.state, assigned_to: s.assigned_to, error: s.error,
+                   text: s.text ?? undefined, tree: s.tree ?? undefined, planner_version: s.planner_version })
+      if (s.state === 'failed') addLog('error', `Task ${p[1]} failed: ${s.error}`, s.assigned_to ?? undefined)
+      if (s.state === 'planning') addLog('info', `Planner ${s.planner_version ?? ''} is writing a plan…`)
+      if (s.state === 'done') addLog('ok', `Task ${p[1]} complete`, s.assigned_to ?? undefined)
+      refreshPallets.current?.()
     }
   }, [])
 
-  // Initial state + MQTT connection (reconnects with fresh signed URL when it drops).
   useEffect(() => {
     let stopped = false
     let retry: ReturnType<typeof setTimeout>
@@ -74,7 +160,7 @@ export function useFleet(cfg: Config) {
     async function load() {
       const [g, fl, ts, pl] = await Promise.all([
         api<Graph>(cfg, '/graph'),
-        api<any[]>(cfg, '/forklifts'),
+        api<ForkliftRow[]>(cfg, '/forklifts'),
         api<Task[]>(cfg, '/tasks'),
         api<{ pallet_id: string; node: string }[]>(cfg, '/pallets'),
       ])
@@ -102,7 +188,9 @@ export function useFleet(cfg: Config) {
         c.on('connect', () => {
           setConn('live')
           setError(undefined)
-          c.subscribe(['fleet/+/pose', 'fleet/+/telemetry', 'fleet/+/event', 'fleet/+/path', 'tasks/+/status'])
+          addLog('ok', 'Connected to fleet network')
+          // AWS IoT Core allows at most 8 filters per SUBSCRIBE; more and it drops the connection.
+          c.subscribe(['fleet/+/+', 'tasks/+/+', 'warehouse/+', 'planners/+'])
         })
         c.on('message', onMessage)
         c.on('error', (e) => setError(`MQTT: ${e.message}`))
@@ -118,6 +206,15 @@ export function useFleet(cfg: Config) {
       }
     }
 
+    let palletTimer: ReturnType<typeof setTimeout>
+    refreshPallets.current = () => {
+      clearTimeout(palletTimer)
+      palletTimer = setTimeout(() => {
+        api<{ pallet_id: string; node: string }[]>(cfg, '/pallets')
+          .then((pl) => setPallets(Object.fromEntries(pl.map((x) => [x.pallet_id, x.node]))))
+          .catch(() => {})
+      }, 400)
+    }
     load().catch((e) => setError(String(e)))
     connect()
     return () => {
@@ -130,9 +227,21 @@ export function useFleet(cfg: Config) {
   const publish = (topic: string, payload: object) => client.current?.publish(topic, JSON.stringify(payload), { qos: 1 })
 
   return {
-    graph, forklifts, tasks, pallets, conn, error,
-    goto: (forkliftId: string, node: string) => publish(`fleet/${forkliftId}/goto`, { node }),
-    submitTask: (text: string) => publish('tasks/new', { text }),
-    stop: (forkliftId: string) => api(cfg, `/forklifts/${forkliftId}/stop`, 'POST'),
+    graph, forklifts, trails, tasks, pallets, locks, people, log, stops, conn, error, labTick,
+    placePerson: (x: number, y: number) => api(cfg, '/hazard', 'POST', { x, y }),
+    clearPerson: () => api(cfg, '/hazard', 'POST', { clear: true }),
+    resetDemo: () => api(cfg, '/demo/reset', 'POST'),
+    goto: (forkliftId: string, node: string) => {
+      addLog('info', `Dispatch to ${node}`, forkliftId)
+      publish(`fleet/${forkliftId}/goto`, { node })
+    },
+    submitTask: (text: string) => {
+      addLog('info', `Order: “${text}”`)
+      publish('tasks/new', { text })
+    },
+    stop: (forkliftId: string) => {
+      addLog('warn', 'Operator stop requested', forkliftId)
+      return api(cfg, `/forklifts/${forkliftId}/stop`, 'POST')
+    },
   }
 }

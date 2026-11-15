@@ -28,7 +28,7 @@ def test_graph_astar():
     assert path[0] == "dock_A" and path[-1] == "slot_A4"
     # Block the direct lane and it must route around
     blocked = g.astar("dock_A", "j3", blocked_edges=[edge_id("j1", "j3")])
-    assert blocked is not None and edge_id("j1", "j3") not in {edge_id(a, b) for a, b in zip(blocked, blocked[1:])}
+    assert blocked is not None and edge_id("j1", "j3") not in {edge_id(a, b) for a, b in zip(blocked, blocked[1:], strict=False)}
     assert g.nearest_node(0.11, 0.21) == "dock_A"
 
 
@@ -36,3 +36,28 @@ def test_pallets_on_real_nodes():
     g = Graph.load()
     for pallet, node in g.pallets.items():
         assert node in g.nodes, pallet
+
+
+def test_routes_never_pass_through_slots_or_docks():
+    g = Graph.load()
+    for a in g.nodes:
+        for b in g.nodes:
+            if a == b:
+                continue
+            route = g.astar(a, b)
+            assert route is not None, f"{a}->{b} unreachable"
+            assert all(g.nodes[n].type == "junction" for n in route[1:-1]), route
+
+
+def test_safety_guard_stops_and_resumes():
+    from fleet_shared.safety import Guard, Hazards
+    h, g = Hazards(), Guard()
+    pose, ahead = (0.4, 0.2, 0.0), [{"x": 0.9, "y": 0.2}]
+    assert g.update(pose, ahead, h) is None
+    h.on_detections({"model_version": "virtual-demo", "objects": [{"cls": "person", "x": 0.65, "y": 0.25}]})
+    assert g.update(pose, ahead, h) == "stop"          # person on the lane ahead
+    assert g.update(pose, ahead, h) is None            # still holding
+    h.on_detections({"model_version": "virtual-demo", "objects": []})
+    assert g.update(pose, ahead, h) == "clear"
+    h.on_detections({"model_version": "virtual-demo", "objects": [{"cls": "person", "x": 0.65, "y": 0.6}]})
+    assert g.update(pose, ahead, h) is None            # far from the path: keep driving

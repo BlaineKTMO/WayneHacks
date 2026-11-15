@@ -61,7 +61,7 @@ class Graph:
         return min(self.nodes.values(), key=lambda n: math.hypot(n.x - x, n.y - y)).id
 
     def path_length(self, path: list[str]) -> float:
-        return sum(self.dist(a, b) for a, b in zip(path, path[1:]))
+        return sum(self.dist(a, b) for a, b in zip(path, path[1:], strict=False))
 
     # ---- planning --------------------------------------------------------
     def astar(
@@ -97,6 +97,9 @@ class Graph:
             for nxt in self.adj[cur]:
                 eid = edge_id(cur, nxt)
                 if eid in blocked:
+                    continue
+                # Slots and docks are destinations, never shortcuts: don't drive through them.
+                if nxt != goal and self.nodes[nxt].type != "junction":
                     continue
                 ng = cost + self.dist(cur, nxt) + penalty.get(eid, 0.0)
                 if ng < g.get(nxt, math.inf):

@@ -1,33 +1,157 @@
 {
-  "_comment": "Tabletop warehouse, metres, world frame from the corner tags. Origin = corner tag 0 (bottom-left). Edit to match the printed floor map.",
-  "size": {"width": 1.5, "height": 1.0},
+  "_comment": "Tabletop warehouse, metres, world frame from the corner tags. Origin = corner tag 0 (bottom-left). Slots and docks are dead ends off the aisles; routes never pass through them. Edit to match the printed floor map.",
+  "size": {
+    "width": 1.5,
+    "height": 1.0
+  },
   "nodes": [
-    {"id": "dock_A",  "x": 0.10, "y": 0.20, "type": "dock"},
-    {"id": "dock_B",  "x": 0.10, "y": 0.80, "type": "dock"},
-    {"id": "j1",      "x": 0.40, "y": 0.20, "type": "junction"},
-    {"id": "j2",      "x": 0.40, "y": 0.80, "type": "junction"},
-    {"id": "j3",      "x": 0.90, "y": 0.20, "type": "junction"},
-    {"id": "j4",      "x": 0.90, "y": 0.80, "type": "junction"},
-    {"id": "slot_A1", "x": 0.40, "y": 0.50, "type": "slot"},
-    {"id": "slot_A2", "x": 0.90, "y": 0.50, "type": "slot"},
-    {"id": "slot_A3", "x": 1.35, "y": 0.20, "type": "slot"},
-    {"id": "slot_A4", "x": 1.35, "y": 0.80, "type": "slot"}
+    {
+      "id": "dock_A",
+      "x": 0.1,
+      "y": 0.2,
+      "type": "dock"
+    },
+    {
+      "id": "dock_B",
+      "x": 0.1,
+      "y": 0.8,
+      "type": "dock"
+    },
+    {
+      "id": "j1",
+      "x": 0.4,
+      "y": 0.2,
+      "type": "junction"
+    },
+    {
+      "id": "j2",
+      "x": 0.4,
+      "y": 0.8,
+      "type": "junction"
+    },
+    {
+      "id": "j3",
+      "x": 0.9,
+      "y": 0.2,
+      "type": "junction"
+    },
+    {
+      "id": "j4",
+      "x": 0.9,
+      "y": 0.8,
+      "type": "junction"
+    },
+    {
+      "id": "j5",
+      "x": 0.4,
+      "y": 0.5,
+      "type": "junction"
+    },
+    {
+      "id": "j6",
+      "x": 0.9,
+      "y": 0.5,
+      "type": "junction"
+    },
+    {
+      "id": "slot_A1",
+      "x": 0.62,
+      "y": 0.5,
+      "type": "slot"
+    },
+    {
+      "id": "slot_A2",
+      "x": 1.15,
+      "y": 0.5,
+      "type": "slot"
+    },
+    {
+      "id": "slot_A3",
+      "x": 1.35,
+      "y": 0.2,
+      "type": "slot"
+    },
+    {
+      "id": "slot_A4",
+      "x": 1.35,
+      "y": 0.8,
+      "type": "slot"
+    }
   ],
   "edges": [
-    {"from": "dock_A", "to": "j1", "bidirectional": true},
-    {"from": "dock_B", "to": "j2", "bidirectional": true},
-    {"from": "j1", "to": "slot_A1", "bidirectional": true},
-    {"from": "slot_A1", "to": "j2", "bidirectional": true},
-    {"from": "j1", "to": "j3", "bidirectional": true},
-    {"from": "j2", "to": "j4", "bidirectional": true},
-    {"from": "j3", "to": "slot_A2", "bidirectional": true},
-    {"from": "slot_A2", "to": "j4", "bidirectional": true},
-    {"from": "j3", "to": "slot_A3", "bidirectional": true},
-    {"from": "j4", "to": "slot_A4", "bidirectional": true}
+    {
+      "from": "dock_A",
+      "to": "j1",
+      "bidirectional": true
+    },
+    {
+      "from": "dock_B",
+      "to": "j2",
+      "bidirectional": true
+    },
+    {
+      "from": "j1",
+      "to": "j5",
+      "bidirectional": true
+    },
+    {
+      "from": "j5",
+      "to": "j2",
+      "bidirectional": true
+    },
+    {
+      "from": "j3",
+      "to": "j6",
+      "bidirectional": true
+    },
+    {
+      "from": "j6",
+      "to": "j4",
+      "bidirectional": true
+    },
+    {
+      "from": "j1",
+      "to": "j3",
+      "bidirectional": true
+    },
+    {
+      "from": "j2",
+      "to": "j4",
+      "bidirectional": true
+    },
+    {
+      "from": "j5",
+      "to": "slot_A1",
+      "bidirectional": true
+    },
+    {
+      "from": "j6",
+      "to": "slot_A2",
+      "bidirectional": true
+    },
+    {
+      "from": "j3",
+      "to": "slot_A3",
+      "bidirectional": true
+    },
+    {
+      "from": "j4",
+      "to": "slot_A4",
+      "bidirectional": true
+    }
   ],
   "pallets": [
-    {"id": "pallet_1", "node": "slot_A1"},
-    {"id": "pallet_2", "node": "slot_A2"},
-    {"id": "pallet_3", "node": "slot_A3"}
+    {
+      "id": "pallet_1",
+      "node": "slot_A1"
+    },
+    {
+      "id": "pallet_2",
+      "node": "slot_A2"
+    },
+    {
+      "id": "pallet_3",
+      "node": "slot_A3"
+    }
   ]
 }

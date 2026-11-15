@@ -23,10 +23,11 @@ from aws_cdk import (
 from constructs import Construct
 
 from .dashboard import Dashboard
+from .simfleet import SimFleet
 
 
 class FleetStack(Stack):
-    def __init__(self, scope: Construct, cid: str, *, lambda_code_dir: str, **kw):
+    def __init__(self, scope: Construct, cid: str, *, lambda_code_dir: str, sim_code_dir: str, **kw):
         super().__init__(scope, cid, **kw)
 
         # ---------------- State: DynamoDB (what's true right now) ----------------
@@ -78,6 +79,7 @@ class FleetStack(Stack):
             "EDGE_LOCKS_TABLE": edge_locks.table_name,
             "PALLETS_TABLE": pallets.table_name,
             "PLANNERS_TABLE": planners.table_name,
+            "EPISODES_TABLE": episodes.table_name,
             "DATA_BUCKET": bucket.bucket_name,
             "IOT_ENDPOINT": endpoint,
         }
@@ -103,36 +105,57 @@ class FleetStack(Stack):
             resources=[
                 self.format_arn(service="iot", resource="topic", resource_name="fleet/*"),
                 self.format_arn(service="iot", resource="topic", resource_name="tasks/*"),
+                self.format_arn(service="iot", resource="topic", resource_name="warehouse/*"),
+                self.format_arn(service="iot", resource="topic", resource_name="planners/*"),
             ],
         )
 
         ingest = fn("Ingest", "ingest.handler")
         forklifts.grant_read_write_data(ingest)
         tasks.grant_read_write_data(ingest)
+        pallets.grant_read_write_data(ingest)  # tree runner updates pallet locations on Pick/Drop
+        edge_locks.grant_read_write_data(ingest)  # traffic control: reservations
+        episodes.grant_write_data(ingest)         # tree runner records episodes
+        bucket.grant_put(ingest, "episodes/*")
+        ingest.add_to_role_policy(publish_policy)
 
         planner = fn("RoutePlanner", "route_planner.handler")
         forklifts.grant_read_write_data(planner)
         tasks.grant_read_write_data(planner)
-        edge_locks.grant_read_data(planner)
+        edge_locks.grant_read_write_data(planner)
         planner.add_to_role_policy(publish_policy)
 
         dispatch = fn("Dispatch", "dispatch.handler", timeout=60)
         tasks.grant_read_write_data(dispatch)
-        forklifts.grant_read_data(dispatch)
-        pallets.grant_read_data(dispatch)
-        planners.grant_read_data(dispatch)
+        forklifts.grant_read_write_data(dispatch)
+        pallets.grant_read_write_data(dispatch)
+        planners.grant_read_write_data(dispatch)  # shadow win/run counters
+        edge_locks.grant_read_write_data(dispatch)
+        episodes.grant_write_data(dispatch)
+        bucket.grant_put(dispatch, "episodes/*")
         dispatch.add_to_role_policy(publish_policy)
-        # Ring 3: Bedrock (Claude) writes behavior trees.
+        # Ring 3: Claude on Bedrock writes behavior trees. Converse = bedrock:InvokeModel.
+        # `us.` inference profiles route to Claude models in US Regions, so the foundation-model
+        # ARN needs a Region wildcard; the profile itself is in this Region.
         dispatch.add_to_role_policy(iam.PolicyStatement(
-            actions=["bedrock:InvokeModel", "bedrock:Converse"],
-            resources=["*"],
+            actions=["bedrock:InvokeModel"],
+            resources=[
+                self.format_arn(service="bedrock", resource="inference-profile", resource_name="us.anthropic.claude-*"),
+                "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+            ],
         ))
 
         api = fn("Api", "api.handler")
-        for t in (forklifts, tasks, pallets, edge_locks, planners):
-            t.grant_read_data(api)
+        for t in (forklifts, tasks, pallets, edge_locks):
+            t.grant_read_write_data(api)  # read for the dashboard; write for POST /demo/reset
+        planners.grant_read_write_data(api)  # promote
         api.add_to_role_policy(publish_policy)
+        # Demo person / hazard is a retained message on warehouse/detections (needs RetainPublish).
+        api.add_to_role_policy(iam.PolicyStatement(
+            actions=["iot:RetainPublish"],
+            resources=[self.format_arn(service="iot", resource="topic", resource_name="warehouse/*")]))
         Dashboard(self, "Dashboard", api_fn=api)
+        SimFleet(self, "SimFleet", code_dir=sim_code_dir, forklifts_table=forklifts, api_fn=api)
 
         # ---------------- IoT rules ----------------------------------------------
         rule_errors = logs.LogGroup(self, "IotRuleErrors",
@@ -194,9 +217,9 @@ class FleetStack(Stack):
                 {"Effect": "Allow", "Action": "iot:Publish",
                  "Resource": [topic("fleet/*"), topic("warehouse/*")]},
                 {"Effect": "Allow", "Action": "iot:Subscribe",
-                 "Resource": [topicfilter("fleet/*")]},
+                 "Resource": [topicfilter("fleet/*"), topicfilter("warehouse/*")]},
                 {"Effect": "Allow", "Action": "iot:Receive",
-                 "Resource": [topic("fleet/*")]},
+                 "Resource": [topic("fleet/*"), topic("warehouse/*")]},
             ],
         })
         iot.CfnThing(self, "EdgeThing", thing_name="forklift-edge-01")

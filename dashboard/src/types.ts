@@ -2,12 +2,28 @@
 export type Pose = { x: number; y: number; theta: number; conf?: number; ts: number }
 export type ForkliftState = 'IDLE' | 'DRIVING' | 'BLOCKED' | 'STOPPED' | 'FAULT'
 export type Telemetry = { battery_v: number; motor_a: number; state: ForkliftState; node?: string | null; ts: number }
-export type FleetEvent = { type: 'node_reached' | 'done' | 'blocked' | 'fault'; node?: string | null; ts: number }
+export type FleetEvent = { type: 'node_reached' | 'done' | 'blocked' | 'fault' | 'safety_stop' | 'safety_clear'; node?: string | null; ts: number }
 export type PathNode = { id: string; x: number; y: number }
 export type Path = { task_id: string; nodes: PathNode[]; action?: 'pick' | 'drop' | null }
+export type TreeNode = {
+  type: 'Sequence' | 'Fallback' | 'GoTo' | 'Pick' | 'Drop' | 'WaitUntil' | 'Retry'
+  status?: 'pending' | 'running' | 'success' | 'failure'
+  children?: TreeNode[]
+  child?: TreeNode
+  node?: string
+  pallet?: string
+  slot?: string
+  clear?: string
+  timeout_s?: number
+  n?: number
+  attempts?: number
+  error?: string
+}
+
 export type TaskStatus = {
   state: string
-  tree?: unknown
+  tree?: TreeNode | null
+  text?: string | null
   assigned_to?: string | null
   planner_version?: string | null
   error?: string | null
@@ -31,7 +47,10 @@ export type Forklift = {
   lastSeen?: number
   path?: Path
   currentTask?: string | null
+  speed?: number
 }
+
+export type LogEntry = { id: number; ts: number; level: 'info' | 'ok' | 'warn' | 'error'; unit?: string; text: string }
 
 export type Task = {
   task_id: string
@@ -40,4 +59,6 @@ export type Task = {
   assigned_to?: string | null
   error?: string | null
   created_at?: number
+  tree?: TreeNode | null
+  planner_version?: string | null
 }

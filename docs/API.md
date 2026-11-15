@@ -70,8 +70,9 @@ Payloads are UTF-8 JSON objects. Publish with QoS 1 unless noted. Build topics a
 | [`fleet/{id}/event`](#fleetidevent) | edge (for forklift) → cloud | on change | ✅ |
 | [`fleet/{id}/goto`](#fleetidgoto) | dashboard → cloud | on demand | ✅ |
 | [`fleet/{id}/path`](#fleetidpath) | cloud → edge/forklift | on change | ✅ |
-| [`fleet/{id}/stop`](#fleetidstop) | edge or cloud → forklift | on demand | 📐 |
+| [`fleet/{id}/stop`](#fleetidstop) | edge or cloud → forklift | on demand | ✅ cloud/dashboard · 📐 edge safety-guard |
 | [`warehouse/detections`](#warehousedetections) | edge → cloud | 2 Hz | 📐 |
+| [`warehouse/locks`](#warehouselocks) | cloud → dashboard | on change | ✅ |
 | [`tasks/new`](#tasksnew) | dashboard → cloud | on demand | ✅ (records only) |
 | [`tasks/{task_id}/status`](#taskstask_idstatus) | cloud → dashboard | on change | ✅ |
 | [`tasks/{task_id}/shadow`](#taskstask_idshadow) | cloud → dashboard | on change | 📐 |
@@ -177,6 +178,7 @@ The route a forklift should drive. A new path **replaces** the current one.
 | `task_id` | string | ✓ | |
 | `nodes` | array | ✓ | ordered `{id, x, y}`, starting with the forklift's current node |
 | `action` | string \| null | | `pick` \| `drop` \| null, done at the last node |
+| `partial` | boolean | | default `false`. `true` = only the reserved part of the route; stop at the last node and send `blocked` every ~2 s until a longer path arrives |
 
 ```json
 {"task_id": "goto-916e206c",
@@ -186,7 +188,7 @@ The route a forklift should drive. A new path **replaces** the current one.
 
 An empty `nodes` list means "cancel and stop where you are" (📐).
 
-### `fleet/{id}/stop` 📐
+### `fleet/{id}/stop` ✅
 
 Stop immediately. This overrides any path. To resume, send a new `path`.
 
@@ -216,6 +218,14 @@ Things without tags that RF-DETR sees.
 
 Cloud handling (Ring 4): edges within 5 cm of an object are blocked for planning until the object clears.
 
+### `warehouse/locks`
+
+Current node reservations, published by the cloud whenever they change. The dashboard draws them.
+
+```json
+{"locks": {"j1": "fl-01", "j3": "fl-01", "dock_B": "fl-02"}, "ts": 1794685931200}
+```
+
 ### `tasks/new`
 
 A plain-English order from the dashboard.
@@ -230,10 +240,7 @@ A plain-English order from the dashboard.
 
 Today, `Dispatch` stores the task and replies `received`. Ring 3 adds the Bedrock → validate → assign flow (§8).
 
-**Correlation gap:** the dashboard doesn't know the `task_id` until the first status message arrives. Two ways to close it, pick one in Ring 3:
-
-- (a) the dashboard subscribes to `tasks/+/status` and matches on `text`; or
-- (b) add an optional `client_ref` field to `tasks/new` that is echoed back in the status. This is a contract change.
+The dashboard subscribes to `tasks/+/status`; every status message echoes `text`, so a new task can be labelled as soon as its first status arrives.
 
 ### `tasks/{task_id}/status`
 
@@ -246,26 +253,35 @@ The lifecycle of a task.
 | `assigned_to` | string \| null | | forklift ID |
 | `planner_version` | string \| null | | which planner wrote the tree |
 | `error` | string \| null | | set when `state` is `failed` |
+| `text` | string \| null | | the original order, echoed so the dashboard can label it |
 
 | State | Status | Meaning |
 |---|---|---|
 | `received` | ✅ | Stored, not yet planned |
-| `planning` | 📐 | Bedrock is writing the tree |
+| `planning` | ✅ | Bedrock is writing the tree |
 | `running` | ✅ | Executing |
-| `done` | 📐 | Finished successfully |
+| `done` | ✅ | Finished successfully |
+| `cancelled` | ✅ | Cleared by an operator |
 | `failed` | ✅ | See `error` |
 
-📐 Ring 3 adds per-node tree status: `tree` nodes gain a `status` field (`pending` \| `running` \| `success` \| `failure`) so the dashboard can colour the tree live.
+Every `tree` node carries a `status` (`pending` \| `running` \| `success` \| `failure`), plus `error` on a failed leaf and `attempts` on `Retry`, so the dashboard can colour the plan live.
 
-### `tasks/{task_id}/shadow` 📐
+### `tasks/{task_id}/shadow` ✅
 
-A candidate planner's tree for the same command, validated and simulated but never run.
+One per shadow planner per order: its tree for the same order, validated and simulated from the same snapshot, never run.
 
 ```json
-{"planner_version": "v2-fewshot", "tree": {"type": "Sequence", "children": []}, "sim_cost": 3.42, "valid": true}
+{"planner_version": "v2-sonnet", "tree": {"type": "Sequence", "children": []}, "sim_cost": 3.1, "valid": true,
+ "error": null, "latency_ms": 2140, "prod_sim_cost": 5.6, "win": true}
 ```
 
-### `tasks/{task_id}/outcome` 📐
+`win` = valid and `sim_cost <= prod_sim_cost`. Shadow runs are skipped (not counted) when the LLM is unavailable.
+
+### `planners/promoted` ✅
+
+Cloud → dashboard after `POST /planners/{version}/promote`: `{"version": "v2-sonnet", "previous": "v1-naive", "ts": …}`.
+
+### `tasks/{task_id}/outcome` ✅
 
 The real result of a finished task. It is also written to S3 as part of the episode.
 
@@ -278,6 +294,8 @@ The real result of a finished task. It is also written to S3 as part of the epis
 | `replans` | integer | |
 | `stops` | integer | safety stops |
 | `duration_s` | number | |
+
+Until the edge `episode-logger` exists, `distance_m` is the planned route length and `wait_s` is real time beyond the simulator's prediction; `replans` and `stops` are 0.
 
 ---
 
@@ -351,7 +369,7 @@ After editing, run `uv run pytest shared` (it checks the references) and `uv run
 
 ---
 
-## 5. Behavior trees 📐
+## 5. Behavior trees ✅
 
 What Bedrock produces and the tree runner executes. JSON, with every node an object that has a `type`.
 
@@ -384,7 +402,9 @@ Example: "move pallet 3 to dock B".
 4. The forklift holds at most one pallet: `Pick` and `Drop` alternate.
 5. Depth ≤ 5 and ≤ 20 nodes in total.
 
-**Bedrock contract.** Use the Converse API with one tool, `submit_tree(tree)`, whose input schema is the table above, and force the tool choice. The prompt gets:
+**Model:** `us.anthropic.claude-sonnet-4-6` (default planner `v1-sonnet`; override via a `prod` row in `FleetPlanners`).
+
+**Bedrock contract.** Use the Converse API with two tools, `submit_tree(reasoning, tree)` and `reject(reason)`, whose input schema is the table above, and force the tool choice. The prompt gets:
 
 - the primitive list;
 - node IDs only (no coordinates);
@@ -418,6 +438,10 @@ All tables are on-demand capacity with a string partition key and no sort key. F
 | `last_event` | S | Ingest | |
 | `current_task` | S \| NULL | RoutePlanner, Ingest | cleared on `done` |
 | `last_seen` | N | Ingest | epoch ms. The dashboard shows "offline" after 5 s |
+| `route`, `route_task`, `route_action`, `window_end` | L / S | traffic | remaining route (current node first) and the reserved window's end |
+| `blocked_since`, `blocked_first` | N | traffic | replan after 5 s blocked, give up after 45 s |
+| `route_rev` | N | traffic | optimistic-concurrency counter: every route change is conditional on it |
+| `last_step_ts` | N | Ingest | `ts` of the last `done`/`fault` processed; a repeat delivery with the same `ts` is ignored |
 
 ### `FleetTasks` ✅ (key `task_id`)
 
@@ -433,11 +457,13 @@ All tables are on-demand capacity with a string partition key and no sort key. F
 | `created_at`, `finished_at` | N | epoch ms |
 | `error` | S | |
 
-### `FleetEdgeLocks` 🧱 table exists, 📐 logic (key `edge_id`, TTL `expires_at`)
+### `FleetEdgeLocks` ✅ (key `edge_id`, TTL `expires_at`)
+
+**Ring 4 reserves nodes, not edges:** `edge_id` holds a node ID. A forklift holds its current node plus up to 2 nodes ahead; driving an edge needs both ends, which covers both head-on and junction conflicts. Parked forklifts keep their node, renewed by telemetry. Logic: `cloud/lambdas/traffic.py`.
 
 | Attribute | Type | Notes |
 |---|---|---|
-| `edge_id` | S | `j1\|j3` |
+| `edge_id` | S | node ID, e.g. `j3` |
 | `holder` | S | forklift ID |
 | `task_id` | S | |
 | `expires_at` | N | **epoch seconds**, now + 30 s, renewed on each `node_reached` |
@@ -460,7 +486,7 @@ DynamoDB's TTL can take up to about 48 hours to remove expired items, so **alway
 | `node` | S | where it is now. `on:fl-01` while carried (📐) |
 | `last_seen` | N | 📐 |
 
-### `FleetEpisodes` 📐 (key `task_id`)
+### `FleetEpisodes` ✅ (key `task_id`)
 
 | Attribute | Type | Notes |
 |---|---|---|
@@ -472,18 +498,20 @@ DynamoDB's TTL can take up to about 48 hours to remove expired items, so **alway
 | `success` | BOOL | |
 | `created_at` | N | |
 
-### `FleetPlanners` 📐 (key `version`)
+### `FleetPlanners` ✅ (key `version`)
 
 | Attribute | Type | Notes |
 |---|---|---|
-| `version` | S | `v1-naive`, `v2-fewshot`, … |
+| `version` | S | `v1-naive`, `v2-sonnet`, … |
 | `stage` | S | `prod` \| `shadow` \| `retired`. Exactly one `prod` |
-| `model_id` | S | Bedrock model ID, or `sagemaker:<endpoint>` |
-| `prompt_uri` | S | `s3://…/planners/{version}/prompt.md` |
-| `fewshot_uri` | S | optional |
-| `eval` | M | `{success_rate, mean_cost, reject_rate, safety_violations}` |
-| `shadow_wins`, `shadow_runs` | N | live head-to-head counts |
+| `model_id` | S | Bedrock model or inference-profile ID |
+| `prompt` | S | system prompt with `{primitives}` and `{nodes}` placeholders; omitted = Dispatch's default prompt |
+| `description` | S | shown in the planner lab |
+| `eval` | M | last offline run (`mlops/evaluate.py`): `{cases, success_rate, invalid, mean_cost, mean_latency_s, gate, evaluated_at}` |
+| `shadow_wins`, `shadow_runs`, `shadow_cost_sum` | N | live head-to-head counters (reset when a prod planner is demoted to shadow) |
 | `promoted_at` | N | |
+
+Seeded by `cloud/scripts/seed.py` only when the table is empty.
 
 ---
 
@@ -546,7 +574,7 @@ Behaviour is described under [`fleet/{id}/goto`](#fleetidgoto). It can publish t
 - obstacle-blocked edges removed from the graph;
 - lock acquisition before the path is published.
 
-### `Dispatch` ✅ stub → 📐 Ring 3 (handler `dispatch.handler`, timeout 60 s)
+### `Dispatch` ✅ (handler `dispatch.handler`, timeout 60 s)
 
 | Rule | SQL |
 |---|---|
@@ -564,13 +592,13 @@ Behaviour is described under [`fleet/{id}/goto`](#fleetidgoto). It can publish t
 
 The function is already allowed `bedrock:InvokeModel` and `bedrock:Converse`.
 
-### `TreeRunner` 📐
+### `tree_runner` module ✅
 
-This function ticks behavior trees. It is triggered by `fleet/+/event` (`done`, `fault`) through its own rule, or replaced by Step Functions if trees get long. It must be idempotent, because IoT delivers to Lambda at least once. Ignore a `done` for a leaf that is already marked `success`.
+Ticks behavior trees (`cloud/lambdas/tree_runner.py`). Dispatch calls `start()`; Ingest calls `on_event()` when a forklift running a tree task reports `done` or `fault`. Per-node status is stored in `FleetTasks.tree`. It must be idempotent, because IoT delivers to Lambda at least once. Ignore a `done` for a leaf that is already marked `success`.
 
-### `Promote` 📐
+### Promote ✅ (in the `Api` Lambda)
 
-Called by `POST /planners/{version}/promote`. In one `TransactWriteItems`, it sets the current `prod` planner to `retired` and the new version to `prod`.
+`POST /planners/{version}/promote`: one `TransactWriteItems` sets the shadow version to `prod` and the old `prod` back to `shadow` (kept for rollback and further comparison; its counters reset), then publishes `planners/promoted`.
 
 ---
 
@@ -578,30 +606,25 @@ Called by `POST /planners/{version}/promote`. In one `TransactWriteItems`, it se
 
 The dashboard uses two channels: **MQTT over WebSocket** for anything live, and an **HTTP API** for stored state and actions that need checks.
 
-### Auth 📐
+### Auth ✅
 
 - **Sign-in:** a Cognito user pool with team members only; self sign-up is disabled.
 - **AWS credentials:** a Cognito identity pool gives signed-in users temporary credentials. The authenticated role allows:
   - `iot:Connect` with client ID `dash-*`;
-  - `iot:Subscribe`/`Receive` on `fleet/*`, `warehouse/*`, `tasks/*`;
+  - `iot:Subscribe`/`Receive` on `fleet/*`, `warehouse/*`, `tasks/*`, `planners/*`;
   - `iot:Publish` only on `tasks/new` and `fleet/*/goto`.
 - **HTTP API:** API Gateway HTTP API with a Cognito JWT authorizer.
 
-### MQTT (browser) 📐
+### MQTT (browser) ✅
 
-| Subscribe | For |
-|---|---|
-| `fleet/+/pose` | moving icons on the map |
-| `fleet/+/telemetry`, `fleet/+/event` | forklift cards |
-| `warehouse/detections` | red obstacle dots |
-| `tasks/+/status`, `tasks/+/shadow`, `tasks/+/outcome` | command panel and planner panel |
+The dashboard subscribes to exactly 4 filters: `fleet/+/+`, `tasks/+/+`, `warehouse/+`, `planners/+`. **AWS IoT Core allows at most 8 filters per SUBSCRIBE and drops the connection if a request has more**, so keep wildcard filters rather than listing topics. Before connecting it calls `POST /iot/attach` once.
 
 | Publish | For |
 |---|---|
 | `tasks/new` | command box |
 | `fleet/{id}/goto` | clicking a node with a forklift selected |
 
-### HTTP API 📐
+### HTTP API ✅
 
 Base URL: a CloudFormation output (`DashboardApiUrl`). Every request needs `Authorization: Bearer <id token>`. Bodies are JSON.
 
@@ -610,13 +633,17 @@ Base URL: a CloudFormation output (`DashboardApiUrl`). Every request needs `Auth
 | `GET /graph` | contents of `warehouse.json` |
 | `GET /forklifts` | `[{forklift_id, state, node, pose, battery_v, current_task, last_seen}]` |
 | `GET /pallets` | `[{pallet_id, node}]` |
-| `GET /locks` | `[{edge_id, holder, expires_at}]`, unexpired only |
 | `GET /tasks?limit=20` | newest first: `[{task_id, text, status, assigned_to, created_at}]` |
 | `GET /tasks/{task_id}` | full task including `tree` and `path` |
-| `GET /planners` | `[{version, stage, model_id, eval, shadow_wins, shadow_runs}]` |
-| `GET /planners/compare?limit=20` | per recent task: `{task_id, text, prod: {version, cost}, candidate: {version, sim_cost}}` |
+| `GET /planners` | `[{version, stage, model_id, description, shadow_runs, shadow_wins, avg_sim_cost, promoted_at}]`, prod first |
+| `GET /planners/compare?limit=20` | recent planned orders: `{task_id, text, status, prod: {version, sim_cost}, candidates: [{planner_version, sim_cost, valid, win, error}]}` |
 | `POST /planners/{version}/promote` | `200 {version, previous}`. `409` if the version isn't `shadow` |
 | `POST /forklifts/{id}/stop` | publishes `fleet/{id}/stop {reason: "operator"}`. `202` |
+| `POST /iot/attach` | attaches `DashboardIotPolicy` to the caller's own Cognito identity (derived from their token). `200 {identity_id}` |
+| `GET /sim` | hosted simulated fleet: `{on, desired, running, pending}` |
+| `POST /sim` | body `{"on": true\|false}`: starts/stops the hosted simulated fleet. `400` on a bad body |
+
+Live reservations are not an HTTP route; they arrive on the `warehouse/locks` topic.
 
 **Errors** look like `{"error": "<code>", "message": "<human text>"}`:
 
@@ -644,6 +671,8 @@ Ring 1 runs the edge as plain scripts: 🧱 `python -m fleet_edge.step6_ring1`. 
 | `com.fleet.uploader` 📐 | — | S3 `raw/frames/` | samples 1 frame every 5 s |
 
 Shared config for every component comes from the Greengrass deployment as JSON: `{forklift_tags, corner_tags, serial_ports, camera_index}`. This replaces `config.py` on the laptop once Greengrass is in use.
+
+**MQTT reconnects:** connect with `clean_session=False`, and on `on_connection_resumed` with `session_present=False` call `resubscribe_existing_topics()`. Otherwise a dropped connection silently stops all incoming paths while outgoing telemetry keeps working (see `tools/sim_fleet.py`).
 
 Cloud connection: thing `forklift-edge-01`, certificate from `cloud/scripts/create_edge_cert.py`, policy `ForkliftEdgePolicy` (§13). Use client ID `edge-01`.
 
@@ -695,6 +724,14 @@ Also: `now_ms()`, `FORKLIFT_STATES`, `EVENT_TYPES`.
 | `overlay` | `WorldCanvas`, `draw(img, canvas, pose, follower, status, ok)` |
 | `step1_…step6_` | runnable scripts (`python -m fleet_edge.stepN_…`) |
 
+### Simulated fleet ✅
+
+`tools/sim_fleet.py` runs simulated forklifts that speak the exact contract (pose 10 Hz, telemetry 1 Hz, events, partial paths, blocked). Run it locally, or use the AWS-hosted copy (ECS Fargate, `cloud/fleet_cloud/simfleet.py`) via `POST /sim`. Both start each forklift at its last known node from `FleetForklifts`. **Never run both at once.**
+
+### `tools/e2e.py` ✅
+
+Live end-to-end test through the browser's auth path (29 checks). Run before a demo: `uv run python tools/e2e.py --cloud-sim`.
+
 ### `tools/fake_fleet.py` ✅
 
 A command-line tool that publishes contract messages using your AWS login:
@@ -711,7 +748,9 @@ status <fid>
 
 ---
 
-## 12. MLOps: simulator and planner pipeline 📐
+## 12. MLOps: simulator and planner pipeline ✅
+
+Implemented: `shared/fleet_shared/sim.py`, `mlops/evaluate.py` (offline gate), `mlops/calibrate.py` (writes `sim_params.json`). Fine-tuning a distilled planner on SageMaker is still 📐.
 
 **Simulator** (`mlops/sim.py`):
 

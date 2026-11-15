@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
+import os
 import queue
 import threading
 import time
@@ -32,27 +32,46 @@ from fleet_edge.pure_pursuit import WaypointFollower
 from fleet_shared import topics
 from fleet_shared.graph import Graph
 from fleet_shared.messages import Event, Path, Pose, Stop, Telemetry
+from fleet_shared.safety import Guard, Hazards
+
+HAZARDS = Hazards()
 
 REGION = "us-east-2"
+VERBOSE = False
 START = {"fl-01": "dock_A", "fl-02": "dock_B"}
 TICK_S = 0.05            # 20 Hz control
 POSE_EVERY = 2           # 10 Hz pose
 TELEMETRY_EVERY = 20     # 1 Hz
+BLOCKED_EVERY = 40       # re-send "blocked" every 2 s while waiting at the end of a partial path
+
+
+def last_known_nodes() -> dict[str, str]:
+    """Start where the cloud last saw each forklift, so state stays consistent across restarts."""
+    try:
+        items = boto3.resource("dynamodb", region_name=REGION).Table("FleetForklifts").scan()["Items"]
+        return {i["forklift_id"]: i["node"] for i in items if i.get("node")}
+    except Exception as e:
+        print(f"(could not read last positions, using defaults: {e})")
+        return {}
 
 
 class SimForklift:
-    def __init__(self, fid: str, graph: Graph, publish):
-        n = graph.nodes[START.get(fid, "dock_A")]
+    def __init__(self, fid: str, graph: Graph, publish, start: str | None = None):
+        n = graph.nodes[start if start in graph.nodes else START.get(fid, "dock_A")]
         self.fid, self.publish = fid, publish
         self.link = SimLink(x=n.x, y=n.y, theta=0.0)
         self.node = n.id
         self.path: Path | None = None
         self.follower: WaypointFollower | None = None
         self.state = "IDLE"
+        self.waiting = False     # stopped at the end of a partial path
+        self.guard = Guard()
         self.inbox: queue.Queue = queue.Queue()   # messages from MQTT threads
 
     # -- MQTT callbacks just queue; all state changes happen in tick() on one thread
     def on_message(self, kind: str, payload: bytes):
+        if VERBOSE:
+            print(f"[{self.fid}] <- {kind} {payload[:160]!r}", flush=True)
         self.inbox.put((kind, payload))
 
     def _handle(self, kind: str, payload: bytes):
@@ -64,20 +83,21 @@ class SimForklift:
                     return
                 # First node is where we are; drive to the rest.
                 targets = p.nodes[1:] if p.nodes[0]["id"] == self.node and len(p.nodes) > 1 else p.nodes
-                self.path = Path(task_id=p.task_id, nodes=targets, action=p.action)
+                self.path = Path(task_id=p.task_id, nodes=targets, action=p.action, partial=p.partial)
                 self.follower = WaypointFollower([(n["x"], n["y"]) for n in targets], loop=False)
-                self.state = "DRIVING"
-                print(f"[{self.fid}] path {p.task_id}: {[n['id'] for n in targets]}")
+                self.state, self.waiting = "DRIVING", False
+                print(f"[{self.fid}] path {p.task_id}: {[n['id'] for n in targets]}{' (partial)' if p.partial else ''}")
             elif kind == "stop":
                 reason = Stop.from_json(payload).reason
                 self._stop_driving("STOPPED")
+                self.waiting = False
                 print(f"[{self.fid}] STOP ({reason})")
         except ValueError as e:
             print(f"[{self.fid}] bad {kind} message: {e}")
 
     def _stop_driving(self, state: str):
         self.link.stop(state.lower())
-        self.follower, self.path, self.state = None, None, state
+        self.follower, self.path, self.state, self.waiting = None, None, state, False
 
     def _event(self, type_: str, node: str | None):
         self.publish(topics.event(self.fid), Event(type=type_, node=node))
@@ -86,7 +106,21 @@ class SimForklift:
         while not self.inbox.empty():
             self._handle(*self.inbox.get())
 
-        if self.follower:
+        upcoming = self.path.nodes[self.follower.index:] if self.follower and self.path else []
+        action = self.guard.update((self.link.x, self.link.y, self.link.theta), upcoming, HAZARDS)
+        if action == "stop":
+            self.link.stop("person")
+            self._event("safety_stop", self.node)
+            print(f"[{self.fid}] SAFETY STOP: person in path")
+        elif action == "clear":
+            self._event("safety_clear", self.node)
+            print(f"[{self.fid}] path clear, resuming")
+        if self.guard.holding:
+            self.link.stop("person")
+            self.state = "STOPPED"
+        elif self.follower:
+            if self.state == "STOPPED":
+                self.state = "DRIVING"
             before = self.follower.index
             left, right = self.follower.update(self.link.x, self.link.y, self.link.theta)
             self.link.wheels(left, right)
@@ -96,13 +130,22 @@ class SimForklift:
                 self.node = self.path.nodes[i]["id"]
                 self._event("node_reached", self.node)
             if self.follower.finished:
-                if self.path.action:
-                    time.sleep(0.5)  # pretend to raise/lower the forks
-                self._event("done", self.node)
-                print(f"[{self.fid}] done at {self.node}")
-                self._stop_driving("IDLE")
+                if self.path.partial:
+                    # End of the reserved window: wait here until the cloud extends the route.
+                    self.link.wheels(0, 0)
+                    self.follower, self.state, self.waiting = None, "BLOCKED", True
+                    self._event("blocked", self.node)
+                    print(f"[{self.fid}] waiting at {self.node} for the lane to clear")
+                else:
+                    if self.path.action:
+                        time.sleep(0.5)  # pretend to raise/lower the forks
+                    self._event("done", self.node)
+                    print(f"[{self.fid}] done at {self.node}")
+                    self._stop_driving("IDLE")
         else:
             self.link.wheels(0, 0)
+            if self.waiting and n % BLOCKED_EVERY == 0:
+                self._event("blocked", self.node)
 
         if n % POSE_EVERY == 0:
             self.publish(topics.pose(self.fid), Pose(x=round(self.link.x, 4), y=round(self.link.y, 4),
@@ -115,12 +158,26 @@ class SimForklift:
 
 def connect(client_id: str) -> mqtt.Connection:
     session = boto3.Session(region_name=REGION)
-    creds = session.get_credentials().get_frozen_credentials()
-    provider = auth.AwsCredentialsProvider.new_static(creds.access_key, creds.secret_key, creds.token)
+    if os.environ.get("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI"):
+        provider = auth.AwsCredentialsProvider.new_default_chain()  # ECS task role; refreshes itself
+    else:
+        creds = session.get_credentials().get_frozen_credentials()  # local `aws login` session
+        provider = auth.AwsCredentialsProvider.new_static(creds.access_key, creds.secret_key, creds.token)
     endpoint = session.client("iot").describe_endpoint(endpointType="iot:Data-ATS")["endpointAddress"]
+    def interrupted(connection, error, **_):
+        print(f"!! MQTT connection interrupted: {error}", flush=True)
+
+    def resumed(connection, return_code, session_present, **_):
+        print(f"!! MQTT reconnected (session_present={session_present})", flush=True)
+        if not session_present:
+            # Broker forgot our subscriptions: without this we'd keep publishing but never hear back.
+            fut, _ = connection.resubscribe_existing_topics()
+            fut.add_done_callback(lambda f: print(f"!! resubscribed: {f.result()}", flush=True))
+
     conn = mqtt_connection_builder.websockets_with_default_aws_signing(
         endpoint=endpoint, region=REGION, credentials_provider=provider,
-        client_id=client_id, clean_session=True, keep_alive_secs=30)
+        client_id=client_id, clean_session=False, keep_alive_secs=30,
+        on_connection_interrupted=interrupted, on_connection_resumed=resumed)
     conn.connect().result(timeout=15)
     print(f"connected to {endpoint} as {client_id}")
     return conn
@@ -129,7 +186,10 @@ def connect(client_id: str) -> mqtt.Connection:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("forklifts", nargs="*", default=list(START))
+    ap.add_argument("-v", "--verbose", action="store_true", help="print every received message")
     a = ap.parse_args()
+    global VERBOSE
+    VERBOSE = a.verbose
 
     graph = Graph.load()
     conn = connect(f"sim-{uuid.uuid4().hex[:6]}")
@@ -139,13 +199,17 @@ def main():
         with lock:
             conn.publish(topic=topic, payload=msg.to_json(), qos=mqtt.QoS.AT_MOST_ONCE)
 
-    fleet = {fid: SimForklift(fid, graph, publish) for fid in a.forklifts}
+    known = last_known_nodes()
+    fleet = {fid: SimForklift(fid, graph, publish, known.get(fid)) for fid in a.forklifts}
     for fid, f in fleet.items():
         for kind, topic in (("path", topics.path(fid)), ("stop", topics.stop(fid))):
             fut, _ = conn.subscribe(topic=topic, qos=mqtt.QoS.AT_LEAST_ONCE,
                                     callback=lambda topic, payload, f=f, kind=kind, **_: f.on_message(kind, payload))
             fut.result(timeout=10)
         print(f"[{fid}] ready at {f.node}")
+    fut, _ = conn.subscribe(topic=topics.DETECTIONS, qos=mqtt.QoS.AT_LEAST_ONCE,
+                            callback=lambda topic, payload, **_: HAZARDS.on_detections(json.loads(payload)))
+    fut.result(timeout=10)
 
     print("running. Ctrl+C to quit.")
     n = 0

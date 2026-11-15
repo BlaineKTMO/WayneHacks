@@ -1,6 +1,7 @@
 """Tests that run without a camera or Free-WiLi. Run:  uv run pytest edge"""
 
 import math
+import time
 
 from fleet_edge import config
 from fleet_edge.freewili_link import SimLink, format_stop, format_wheels, parse_line
@@ -163,3 +164,41 @@ def test_drift_stop_after_repeated_slides():
         x += config.SPIN_DRIFT_M + 0.01
         f.update(x, 0.2, 0.0)                         # slid: drift
     assert f.mode == "drift_stop" and f.update(x, 0.2, 0.0) == (0, 0)
+
+
+def test_bridge_unit_drives_partial_then_reports_blocked():
+    """A partial route ends in 'blocked' (not 'done'); a full route ends in 'done'."""
+    from fleet_edge.bridge import Unit
+    from fleet_shared.graph import Graph
+    from fleet_shared.messages import Path
+
+    g = Graph.load()
+    sent = []
+    link = SimLink(x=g.nodes["dock_A"].x, y=g.nodes["dock_A"].y, theta=0.0)
+    u = Unit("fl-01", link, g, lambda topic, msg: sent.append((topic, msg)))
+    clock = [0.0]
+    time_monotonic = time.monotonic
+    time.monotonic = lambda: clock[0]
+    link._t = 0.0
+
+    def run(path, steps=4000):
+        u.on_message("path", Path(task_id="t", nodes=g.to_path_nodes(path), partial=False).to_json().encode()
+                     if path[-1] == "j3" else Path(task_id="t", nodes=g.to_path_nodes(path), partial=True).to_json().encode())
+        for _ in range(steps):
+            clock[0] += 0.05
+            u.tick(clock[0], (link.x, link.y, link.theta))
+            if u.follower is None and u.inbox.empty():
+                break
+    try:
+        u.tick(0.0, (link.x, link.y, link.theta))
+        run(["dock_A", "j1"])                    # partial
+        events = [m.type for t, m in sent if t.endswith("/event")]
+        assert events[-1] == "blocked" and "node_reached" in events and u.state == "BLOCKED"
+        run(["j1", "j3"])                        # final
+        events = [m.type for t, m in sent if t.endswith("/event")]
+        assert events[-1] == "done" and u.node == "j3" and u.state == "IDLE"
+        u.on_message("stop", b'{"reason":"person"}')
+        u.tick(clock[0] + 0.05, (link.x, link.y, link.theta))
+        assert u.state == "STOPPED"
+    finally:
+        time.monotonic = time_monotonic

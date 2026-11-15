@@ -17,7 +17,7 @@ EventType = Literal["node_reached", "done", "blocked", "fault"]
 Action = Optional[Literal["pick", "drop"]]
 
 FORKLIFT_STATES = ("IDLE", "DRIVING", "BLOCKED", "STOPPED", "FAULT")
-EVENT_TYPES = ("node_reached", "done", "blocked", "fault")
+EVENT_TYPES = ("node_reached", "done", "blocked", "fault", "safety_stop", "safety_clear")
 
 
 def now_ms() -> int:
@@ -85,6 +85,7 @@ class Path(_Msg):
     task_id: str
     nodes: list  # list of {"id","x","y"} dicts
     action: Optional[str] = None  # "pick" | "drop" | None
+    partial: bool = False  # True: more of the route will follow; stop at the end and report "blocked"
 
     def validate(self):
         for n in self.nodes:
@@ -123,6 +124,12 @@ class Detections(_Msg):
 
 
 @dataclass
+class Locks(_Msg):
+    locks: dict  # node id -> forklift id holding it
+    ts: int = field(default_factory=now_ms)
+
+
+@dataclass
 class TaskNew(_Msg):
     text: str
 
@@ -134,3 +141,4 @@ class TaskStatus(_Msg):
     assigned_to: Optional[str] = None
     planner_version: Optional[str] = None
     error: Optional[str] = None
+    text: Optional[str] = None  # the original order, echoed so the dashboard can label it

@@ -64,6 +64,18 @@ Do these in order. Don't move on until the step's check passes.
 
 Nothing to do: `SERIAL_PORT = "auto"` finds the OG main CPU by name. If that fails, the error lists the ports it saw. Put the right one in `SERIAL_PORT` in `config.py`.
 
+## 2b. Connect to the cloud (after Ring 1 passes)
+
+| Step | Command | Check |
+|---|---|---|
+| **7. Bridge, no hardware** | `uv run python -m fleet_edge.bridge --sim --iam` | Prints `bridge up`. On the dashboard, forklifts move when you click the map. |
+| **8. Device certificate** (once) | `uv run python cloud/scripts/create_edge_cert.py` | Creates `edge/certs/`. **Never** commit or share these files. |
+| **9. Bridge, real forklift** | `uv run python -m fleet_edge.bridge` | Click a spot on the dashboard: the real forklift drives there. Cover its tag: it stops, uncover: it carries on. |
+
+**Before step 9: turn the dashboard's "Simulated fleet" switch OFF**, or the cloud gets two `fl-01`s. Which Free-WiLi drives which forklift is `FORKLIFT_LINKS` in `config.py`.
+
+Pick/Drop: the bridge waits 0.5 s at the spot for now. When the fork servo works, add its command where `bridge.py` says `TODO(forks)`.
+
 ## 3. When something goes wrong
 
 | Symptom | Try |

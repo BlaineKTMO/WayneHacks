@@ -1,13 +1,14 @@
 """IoT rule target for fleet/{id}/goto: plan an A* route and publish fleet/{id}/path.
 
 Ring 2: "click a node on the map, the forklift drives there".
-Ring 4 TODO: penalise edges locked by other forklifts (EdgeLocks) and take locks before driving.
+Ring 4: routing and reservations go through traffic.start_route.
 """
 
 import logging
 import time
 import uuid
 
+import traffic
 from common import from_ddb, publish, table, to_ddb
 from fleet_shared import topics
 from fleet_shared.graph import Graph
@@ -48,7 +49,7 @@ def handler(msg, _ctx):
         publish(topics.task_status(task_id), TaskStatus(state="failed", error=f"unknown node {goto.node}").to_dict())
         return
     try:
-        path = plan(fid, goto.node, task_id)
+        moving = traffic.start_route(fid, goto.node, task_id)
     except ValueError as e:
         log.warning("%s", e)
         publish(topics.task_status(task_id), TaskStatus(state="failed", assigned_to=fid, error=str(e)).to_dict())
@@ -56,11 +57,13 @@ def handler(msg, _ctx):
 
     table("TASKS_TABLE").put_item(Item=to_ddb({
         "task_id": task_id, "text": f"goto {goto.node}", "assigned_to": fid,
-        "status": "running", "path": path, "created_at": int(time.time() * 1000),
+        "status": "running" if moving else "done", "created_at": int(time.time() * 1000),
     }))
+    if not moving:
+        publish(topics.task_status(task_id), TaskStatus(state="done", assigned_to=fid, text=f"goto {goto.node}").to_dict())
+        return
     table("FORKLIFTS_TABLE").update_item(
         Key={"forklift_id": fid}, UpdateExpression="SET current_task = :t",
         ExpressionAttributeValues={":t": task_id})
-    publish(topics.path(fid), path)
-    publish(topics.task_status(task_id), TaskStatus(state="running", assigned_to=fid).to_dict())
-    log.info("%s -> %s via %s", fid, goto.node, [n["id"] for n in path["nodes"]])
+    publish(topics.task_status(task_id), TaskStatus(state="running", assigned_to=fid, text=f"goto {goto.node}").to_dict())
+    log.info("%s -> %s", fid, goto.node)
