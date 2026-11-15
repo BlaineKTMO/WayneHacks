@@ -7,6 +7,12 @@ Units: metres, radians, seconds. World frame: origin at the bottom-left corner t
 CAMERA_INDEX = 2              # eMeet C950 (/dev/video2). 0 is the laptop's built-in camera.
 CAMERA_WIDTH = 1280
 CAMERA_HEIGHT = 720
+# Fixed short exposure. Auto picked ~15.7 ms, which blurred the raised tag on a moving
+# forklift: seen in 61% of frames while driving at 45. At 5 ms it was seen in 100%, and
+# detection got faster (45 -> 27 ms/frame). Gain brightens the darker image back up.
+# Units are the camera's (100 us steps). None = leave the camera on auto exposure.
+CAMERA_EXPOSURE = 50          # 5 ms
+CAMERA_GAIN = 100
 CALIBRATION_FILE = "edge/calibration/camera.npz"   # written by step2_calibrate / calib_auto
 # Last table map (built whenever all 4 corner tags are visible). Loaded at startup, so the
 # forklift or its wires covering a corner tag doesn't stop localization.

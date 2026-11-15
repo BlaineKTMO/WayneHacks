@@ -49,6 +49,13 @@ def open_camera(index: int = config.CAMERA_INDEX) -> cv2.VideoCapture:
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+    if config.CAMERA_EXPOSURE is not None:
+        # V4L2 backend: AUTO_EXPOSURE 1 = manual, 3 = auto (aperture priority).
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)
+        cap.set(cv2.CAP_PROP_EXPOSURE, config.CAMERA_EXPOSURE)
+        cap.set(cv2.CAP_PROP_GAIN, config.CAMERA_GAIN)
+    else:
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 3)
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     if (w, h) != (config.CAMERA_WIDTH, config.CAMERA_HEIGHT):
         print(f"[camera] asked for {config.CAMERA_WIDTH}x{config.CAMERA_HEIGHT}, got {w}x{h}")
