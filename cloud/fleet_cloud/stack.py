@@ -147,9 +147,13 @@ class FleetStack(Stack):
 
         api = fn("Api", "api.handler")
         for t in (forklifts, tasks, pallets, edge_locks):
-            t.grant_read_data(api)
+            t.grant_read_write_data(api)  # read for the dashboard; write for POST /demo/reset
         planners.grant_read_write_data(api)  # promote
         api.add_to_role_policy(publish_policy)
+        # Demo person / hazard is a retained message on warehouse/detections (needs RetainPublish).
+        api.add_to_role_policy(iam.PolicyStatement(
+            actions=["iot:RetainPublish"],
+            resources=[self.format_arn(service="iot", resource="topic", resource_name="warehouse/*")]))
         Dashboard(self, "Dashboard", api_fn=api)
         SimFleet(self, "SimFleet", code_dir=sim_code_dir, forklifts_table=forklifts, api_fn=api)
 
@@ -213,9 +217,9 @@ class FleetStack(Stack):
                 {"Effect": "Allow", "Action": "iot:Publish",
                  "Resource": [topic("fleet/*"), topic("warehouse/*")]},
                 {"Effect": "Allow", "Action": "iot:Subscribe",
-                 "Resource": [topicfilter("fleet/*")]},
+                 "Resource": [topicfilter("fleet/*"), topicfilter("warehouse/*")]},
                 {"Effect": "Allow", "Action": "iot:Receive",
-                 "Resource": [topic("fleet/*")]},
+                 "Resource": [topic("fleet/*"), topic("warehouse/*")]},
             ],
         })
         iot.CfnThing(self, "EdgeThing", thing_name="forklift-edge-01")

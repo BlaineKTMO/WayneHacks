@@ -17,7 +17,7 @@ EventType = Literal["node_reached", "done", "blocked", "fault"]
 Action = Optional[Literal["pick", "drop"]]
 
 FORKLIFT_STATES = ("IDLE", "DRIVING", "BLOCKED", "STOPPED", "FAULT")
-EVENT_TYPES = ("node_reached", "done", "blocked", "fault")
+EVENT_TYPES = ("node_reached", "done", "blocked", "fault", "safety_stop", "safety_clear")
 
 
 def now_ms() -> int:

@@ -11,12 +11,13 @@ type Props = {
   trails: Record<string, [number, number][]>
   pallets: Record<string, string>
   locks?: Record<string, string>
+  people?: { x: number; y: number }[]
   selected?: string
   onNodeClick: (node: string) => void
   onUnitClick: (id: string) => void
 }
 
-export function WarehouseMap({ graph, forklifts, trails, pallets, locks = {}, selected, onNodeClick, onUnitClick }: Props) {
+export function WarehouseMap({ graph, forklifts, trails, pallets, locks = {}, people = [], selected, onNodeClick, onUnitClick }: Props) {
   const { width: W, height: H } = graph.size
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
   const sy = (y: number) => H - y // world y up -> svg y down
@@ -165,6 +166,16 @@ export function WarehouseMap({ graph, forklifts, trails, pallets, locks = {}, se
           </g>
         )
       })}
+
+      {/* People / obstacles from the camera detector */}
+      {people.map((p, i) => (
+        <g key={`person-${i}`} transform={`translate(${p.x} ${sy(p.y)})`} className="person">
+          <circle r={0.12} className="person-zone" />
+          <circle r={0.022} className="person-dot" />
+          <circle r={0.01} cy={-0.032} className="person-dot" />
+          <title>Person detected</title>
+        </g>
+      ))}
 
       {/* Scale bar + compass */}
       <g transform={`translate(${W - 0.3} ${H + 0.035})`} className="scale">

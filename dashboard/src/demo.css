@@ -142,3 +142,13 @@ p.d-hint { margin: -4px 4px 10px; }
 .w3d canvas { display: block; width: 100% !important; height: 100% !important; }
 .d-sim { margin-top: 12px; }
 .d-sim .sim-switch { width: 100%; justify-content: center; min-height: 48px; font-size: 15px; background: var(--bg); color: var(--text); border-color: var(--line); }
+
+.d-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.d-actions .sim-switch { justify-content: center; min-height: 52px; font-size: 14px; background: var(--bg); color: var(--text); border-color: var(--line); border-radius: 14px; }
+.d-person { min-height: 52px; border-radius: 14px; border: 1.5px solid var(--line-2); background: #fff; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; }
+.d-person.arming { border-color: var(--danger); color: var(--danger); background: #fff3f4; }
+.d-person.on { background: #fff3f4; border-color: var(--danger); color: var(--danger); }
+.d-warn { color: var(--danger); }
+.d-reset-btn, .d-reset button { background: none; border: 1px solid var(--line-2); color: var(--muted); border-radius: 99px; padding: 6px 14px; font: inherit; font-size: 13px; min-height: 36px; }
+.d-reset button:first-of-type { background: var(--danger); border-color: var(--danger); color: #fff; }
+@media (max-width: 560px) { .d-actions { grid-template-columns: 1fr; } }

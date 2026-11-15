@@ -33,6 +33,7 @@ from awsiot import mqtt_connection_builder
 from fleet_shared import topics
 from fleet_shared.graph import Graph
 from fleet_shared.messages import Event, Path as PathMsg, Pose, Stop, Telemetry
+from fleet_shared.safety import Guard, Hazards
 
 from . import config
 from .freewili_link import SerialLink, SimLink
@@ -46,8 +47,10 @@ BLOCKED_EVERY_S = 2.0
 class Unit:
     """One forklift: its link to the motors, its route, and what it reports."""
 
-    def __init__(self, fid: str, link, graph: Graph, publish):
+    def __init__(self, fid: str, link, graph: Graph, publish, hazards: Hazards | None = None):
         self.fid, self.link, self.graph, self.publish = fid, link, graph, publish
+        self.hazards = hazards or Hazards()
+        self.guard = Guard()
         self.node: str | None = None
         self.path: PathMsg | None = None
         self.follower: WaypointFollower | None = None
@@ -99,8 +102,24 @@ class Unit:
                 print(f"[{self.fid}] tag lost: stopped")
             self.state = "STOPPED" if self.follower or self.state != "IDLE" else self.state
             return
-        if self.state == "STOPPED" and self.follower:  # tag is back: carry on
+        if self.state == "STOPPED" and self.follower and not self.guard.holding:  # tag is back: carry on
             self.state = "DRIVING"
+
+        # Safety guard: a person in or near the path stops us here, at the edge, with no cloud round trip.
+        upcoming = self.path.nodes[self.follower.index:] if self.follower and self.path else []
+        action = self.guard.update(self.pose, upcoming, self.hazards)
+        if action == "stop":
+            self.link.stop("person")
+            self.state = "STOPPED"
+            self._event("safety_stop")
+            print(f"[{self.fid}] SAFETY STOP: person in path")
+        elif action == "clear":
+            self.state = "DRIVING" if self.follower else "IDLE"
+            self._event("safety_clear")
+            print(f"[{self.fid}] path clear, resuming")
+        if self.guard.holding:
+            self.link.stop("person")
+            return
 
         if self.follower and self.pose:
             before = self.follower.index
@@ -180,6 +199,10 @@ def main():
         with lock:
             conn.publish(topic=topic, payload=msg.to_json(), qos=mqtt.QoS.AT_MOST_ONCE)
 
+    hazards = Hazards()
+    fut, _ = conn.subscribe(topic=topics.DETECTIONS, qos=mqtt.QoS.AT_LEAST_ONCE,
+                            callback=lambda topic, payload, **_: hazards.on_detections(json.loads(payload)))
+    fut.result(timeout=10)
     units: dict[str, Unit] = {}
     fids = config.SIM_START if a.sim else config.FORKLIFT_LINKS
     for fid in fids:
@@ -188,7 +211,7 @@ def main():
             link = SimLink(x=start.x, y=start.y, theta=0.0)
         else:
             link = SerialLink(config.FORKLIFT_LINKS[fid])
-        units[fid] = Unit(fid, link, graph, publish)
+        units[fid] = Unit(fid, link, graph, publish, hazards)
         for kind, topic in (("path", topics.path(fid)), ("stop", topics.stop(fid))):
             fut, _ = conn.subscribe(topic=topic, qos=mqtt.QoS.AT_LEAST_ONCE,
                                     callback=lambda topic, payload, u=units[fid], k=kind, **_: u.on_message(k, payload))

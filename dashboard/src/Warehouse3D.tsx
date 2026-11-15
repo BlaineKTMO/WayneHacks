@@ -10,6 +10,7 @@ type Props = {
   forklifts: Record<string, Forklift>
   pallets: Record<string, string>
   locks?: Record<string, string>
+  people?: { x: number; y: number }[]
   selected?: string
   onNodeClick: (node: string) => void
   onUnitClick?: (id: string) => void
@@ -208,6 +209,9 @@ export default function Warehouse3D(props: Props) {
     const shelfPallets: Record<string, THREE.Group> = {}
     const lockTiles = new THREE.Group(); scene.add(lockTiles)
     const routes = new THREE.Group(); scene.add(routes)
+    const peopleLayer = new THREE.Group(); scene.add(peopleLayer)
+    const personMat = new THREE.MeshStandardMaterial({ color: 0xff4d5e, roughness: 0.5 })
+    const zoneMat = new THREE.MeshBasicMaterial({ color: 0xff4d5e, transparent: true, opacity: 0.18, depthWrite: false })
 
     const resize = () => {
       const w = el.clientWidth, h = el.clientHeight
@@ -275,6 +279,15 @@ export default function Warehouse3D(props: Props) {
         const t = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.002, 0.085),
           new THREE.MeshBasicMaterial({ color: unitColour(h), transparent: true, opacity: 0.35, depthWrite: false }))
         t.position.copy(V(node.x, node.y, 0.004)); lockTiles.add(t)
+      }
+      // people
+      peopleLayer.clear()
+      for (const p of latest.current.people ?? []) {
+        const g = new THREE.Group()
+        const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, 0.07, 6, 12), personMat); body.position.y = 0.055; body.castShadow = true
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.016, 16, 12), personMat); head.position.y = 0.115; head.castShadow = true
+        const zone = new THREE.Mesh(new THREE.CircleGeometry(0.12, 40).rotateX(-Math.PI / 2), zoneMat); zone.position.y = 0.005
+        g.add(body, head, zone); g.position.copy(V(p.x, p.y)); peopleLayer.add(g)
       }
       // routes
       routes.clear()

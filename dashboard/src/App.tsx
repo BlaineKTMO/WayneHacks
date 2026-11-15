@@ -141,7 +141,7 @@ export function ConsoleView({ fleet, email, signOut, cfg }: { fleet: Fleet; emai
           </div>
           <div className="map-wrap">
             {fleet.graph
-              ? <WarehouseMap graph={fleet.graph} forklifts={fleet.forklifts} trails={fleet.trails} pallets={fleet.pallets} locks={fleet.locks}
+              ? <WarehouseMap graph={fleet.graph} forklifts={fleet.forklifts} trails={fleet.trails} pallets={fleet.pallets} locks={fleet.locks} people={fleet.people}
                   selected={selected} onNodeClick={(n) => selected && fleet.goto(selected, n)} onUnitClick={setSelected} />
               : <div className="empty">Loading floor plan…</div>}
           </div>

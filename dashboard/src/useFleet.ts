@@ -22,6 +22,7 @@ export function useFleet(cfg: Config) {
   const [log, setLog] = useState<LogEntry[]>([])
   const [stops, setStops] = useState(0)
   const [locks, setLocks] = useState<Record<string, string>>({})
+  const [people, setPeople] = useState<{ x: number; y: number }[]>([])
   const [labTick, setLabTick] = useState(0)  // bumps when shadow/outcome/promotion data changes
   const [conn, setConn] = useState<Conn>('connecting')
   const [error, setError] = useState<string>()
@@ -95,6 +96,8 @@ export function useFleet(cfg: Config) {
           if (e.type === 'done') addLog('ok', `Task complete at ${e.node}`, id)
           if (e.type === 'blocked') addLog('warn', `Blocked at ${e.node}, waiting for lane`, id)
           if (e.type === 'fault') addLog('error', `Fault at ${e.node ?? 'unknown'}`, id)
+          if (e.type === 'safety_stop') { setStops((s) => s + 1); addLog('error', 'SAFETY STOP: person in path', id) }
+          if (e.type === 'safety_clear') addLog('ok', 'Path clear, resuming', id)
           return patchForklift(id, {
             lastEvent: e.type,
             ...(e.node ? { node: e.node } : {}),
@@ -128,6 +131,11 @@ export function useFleet(cfg: Config) {
     if (topic === 'planners/promoted') {
       addLog('ok', `Planner ${msg.version} promoted to production (was ${msg.previous ?? 'none'})`)
       setLabTick((n) => n + 1)
+      return
+    }
+    if (topic === 'warehouse/detections') {
+      const objs = (msg.objects ?? []) as { cls: string; x: number; y: number }[]
+      setPeople(objs.filter((o) => o.cls === 'person' || o.cls === 'obstacle').map((o) => ({ x: o.x, y: o.y })))
       return
     }
     if (topic === 'warehouse/locks') {
@@ -219,7 +227,10 @@ export function useFleet(cfg: Config) {
   const publish = (topic: string, payload: object) => client.current?.publish(topic, JSON.stringify(payload), { qos: 1 })
 
   return {
-    graph, forklifts, trails, tasks, pallets, locks, log, stops, conn, error, labTick,
+    graph, forklifts, trails, tasks, pallets, locks, people, log, stops, conn, error, labTick,
+    placePerson: (x: number, y: number) => api(cfg, '/hazard', 'POST', { x, y }),
+    clearPerson: () => api(cfg, '/hazard', 'POST', { clear: true }),
+    resetDemo: () => api(cfg, '/demo/reset', 'POST'),
     goto: (forkliftId: string, node: string) => {
       addLog('info', `Dispatch to ${node}`, forkliftId)
       publish(`fleet/${forkliftId}/goto`, { node })

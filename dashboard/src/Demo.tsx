@@ -36,6 +36,20 @@ function Page({ cfg }: { cfg: Config }) {
   const [text, setText] = useState('')
   const [toast, setToast] = useState<string>()
   const [view, setView] = useState<'3d' | '2d'>('3d')
+  const [personMode, setPersonMode] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
+  const nodeById = useMemo(() => Object.fromEntries((fleet.graph?.nodes ?? []).map((n) => [n.id, n])), [fleet.graph])
+  const onFloorTap = (n: string) => {
+    if (!live) return
+    if (personMode) {
+      const node = nodeById[n]
+      fleet.placePerson(node.x, node.y)
+      setPersonMode(false)
+      setToast('Person on the floor: forklifts heading there will stop')
+      return
+    }
+    if (selected) { fleet.goto(selected, n); setToast(`${selected.toUpperCase()} → ${n.replace('_', ' ').toUpperCase()}`) }
+  }
   const [now, setNow] = useState(Date.now())
   const firstId = ids[0]
   useEffect(() => { if (!selected && firstId) setSelected(firstId) }, [firstId, selected])
@@ -115,23 +129,30 @@ function Page({ cfg }: { cfg: Config }) {
                 <button className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>2D</button>
               </div>
             </div>
-            <p className="d-hint">{selected ? <>Tap a spot on the floor to send <b>{selected.toUpperCase()}</b>{view === '3d' ? ' · drag to orbit, pinch to zoom' : ''}</> : 'Pick a forklift'}</p>
+            <p className="d-hint">{personMode ? <b className="d-warn">Tap where the person should stand</b> : selected ? <>Tap a spot on the floor to send <b>{selected.toUpperCase()}</b>{view === '3d' ? ' · drag to orbit, pinch to zoom' : ''}</> : 'Pick a forklift'}</p>
             <div className={`d-map ${view}`}>
               {fleet.graph && view === '3d' && (
                 <Suspense fallback={<div className="d-empty">Loading 3D…</div>}>
                   <Warehouse3D graph={fleet.graph} forklifts={fleet.forklifts} pallets={fleet.pallets} locks={fleet.locks}
                     selected={selected} onUnitClick={setSelected}
-                    onNodeClick={(n) => { if (selected && live) { fleet.goto(selected, n); setToast(`${selected.toUpperCase()} → ${n.replace('_', ' ').toUpperCase()}`) } }} />
+                    people={fleet.people} onNodeClick={onFloorTap} />
                 </Suspense>
               )}
               {fleet.graph && view === '2d'
                 ? <WarehouseMap graph={fleet.graph} forklifts={fleet.forklifts} trails={fleet.trails} pallets={fleet.pallets}
-                    locks={fleet.locks} selected={selected}
-                    onNodeClick={(n) => { if (selected && live) { fleet.goto(selected, n); setToast(`${selected.toUpperCase()} → ${n.replace('_', ' ').toUpperCase()}`) } }}
+                    locks={fleet.locks} people={fleet.people} selected={selected}
+                    onNodeClick={onFloorTap}
                     onUnitClick={setSelected} />
                 : !fleet.graph && <div className="d-empty">Loading the floor…</div>}
             </div>
-            <div className="d-sim"><SimSwitch cfg={cfg} /></div>
+            <div className="d-actions">
+              {fleet.people.length
+                ? <button className="d-person on" onClick={() => { fleet.clearPerson(); setToast('Person removed: forklifts resume') }}>🚶 Remove the person</button>
+                : <button className={`d-person ${personMode ? 'arming' : ''}`} onClick={() => setPersonMode((m) => !m)}>
+                    🚶 {personMode ? 'Cancel' : 'Put a person on the floor'}
+                  </button>}
+              <SimSwitch cfg={cfg} />
+            </div>
             <div className="d-stops">
               {ids.map((id) => (
                 <button key={id} className="d-stop" onClick={() => { fleet.stop(id); setToast(`Stop sent to ${id.toUpperCase()}`) }}>
@@ -214,6 +235,11 @@ function Page({ cfg }: { cfg: Config }) {
 
       <footer className="d-foot">
         <span>Overhead · WayneHacks 2026</span>
+        {confirmReset
+          ? <span className="d-reset">Reset pallets, tasks and planners?{' '}
+              <button onClick={async () => { setConfirmReset(false); await fleet.resetDemo(); setToast('Demo reset'); setTimeout(() => window.location.reload(), 900) }}>Yes, reset</button>{' '}
+              <button onClick={() => setConfirmReset(false)}>Cancel</button></span>
+          : <button className="d-reset-btn" onClick={() => setConfirmReset(true)}>Reset demo</button>}
         <a href="/">Open the operator console →</a>
       </footer>
 

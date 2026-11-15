@@ -48,8 +48,11 @@ class SimFleet(Construct):
         forklifts_table.grant_read_data(task.task_role)
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:DescribeEndpoint"], resources=["*"]))
         task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Connect"], resources=[arn("client", "sim-*")]))
-        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Publish", "iot:Receive"], resources=[arn("topic", "fleet/*")]))
-        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Subscribe"], resources=[arn("topicfilter", "fleet/*")]))
+        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Publish"], resources=[arn("topic", "fleet/*")]))
+        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Receive"],
+                                                         resources=[arn("topic", "fleet/*"), arn("topic", "warehouse/*")]))
+        task.task_role.add_to_policy(iam.PolicyStatement(actions=["iot:Subscribe"],
+                                                         resources=[arn("topicfilter", "fleet/*"), arn("topicfilter", "warehouse/*")]))
         task.add_container(
             "sim",
             image=ecs.ContainerImage.from_registry("public.ecr.aws/docker/library/python:3.12-slim"),

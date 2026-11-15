@@ -16,6 +16,7 @@ Connects over WebSocket signed with your `aws login` credentials (no device cert
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import queue
 import threading
@@ -31,6 +32,9 @@ from fleet_edge.pure_pursuit import WaypointFollower
 from fleet_shared import topics
 from fleet_shared.graph import Graph
 from fleet_shared.messages import Event, Path, Pose, Stop, Telemetry
+from fleet_shared.safety import Guard, Hazards
+
+HAZARDS = Hazards()
 
 REGION = "us-east-2"
 VERBOSE = False
@@ -61,6 +65,7 @@ class SimForklift:
         self.follower: WaypointFollower | None = None
         self.state = "IDLE"
         self.waiting = False     # stopped at the end of a partial path
+        self.guard = Guard()
         self.inbox: queue.Queue = queue.Queue()   # messages from MQTT threads
 
     # -- MQTT callbacks just queue; all state changes happen in tick() on one thread
@@ -101,7 +106,21 @@ class SimForklift:
         while not self.inbox.empty():
             self._handle(*self.inbox.get())
 
-        if self.follower:
+        upcoming = self.path.nodes[self.follower.index:] if self.follower and self.path else []
+        action = self.guard.update((self.link.x, self.link.y, self.link.theta), upcoming, HAZARDS)
+        if action == "stop":
+            self.link.stop("person")
+            self._event("safety_stop", self.node)
+            print(f"[{self.fid}] SAFETY STOP: person in path")
+        elif action == "clear":
+            self._event("safety_clear", self.node)
+            print(f"[{self.fid}] path clear, resuming")
+        if self.guard.holding:
+            self.link.stop("person")
+            self.state = "STOPPED"
+        elif self.follower:
+            if self.state == "STOPPED":
+                self.state = "DRIVING"
             before = self.follower.index
             left, right = self.follower.update(self.link.x, self.link.y, self.link.theta)
             self.link.wheels(left, right)
@@ -188,6 +207,9 @@ def main():
                                     callback=lambda topic, payload, f=f, kind=kind, **_: f.on_message(kind, payload))
             fut.result(timeout=10)
         print(f"[{fid}] ready at {f.node}")
+    fut, _ = conn.subscribe(topic=topics.DETECTIONS, qos=mqtt.QoS.AT_LEAST_ONCE,
+                            callback=lambda topic, payload, **_: HAZARDS.on_detections(json.loads(payload)))
+    fut.result(timeout=10)
 
     print("running. Ctrl+C to quit.")
     n = 0

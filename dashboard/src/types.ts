@@ -2,7 +2,7 @@
 export type Pose = { x: number; y: number; theta: number; conf?: number; ts: number }
 export type ForkliftState = 'IDLE' | 'DRIVING' | 'BLOCKED' | 'STOPPED' | 'FAULT'
 export type Telemetry = { battery_v: number; motor_a: number; state: ForkliftState; node?: string | null; ts: number }
-export type FleetEvent = { type: 'node_reached' | 'done' | 'blocked' | 'fault'; node?: string | null; ts: number }
+export type FleetEvent = { type: 'node_reached' | 'done' | 'blocked' | 'fault' | 'safety_stop' | 'safety_clear'; node?: string | null; ts: number }
 export type PathNode = { id: string; x: number; y: number }
 export type Path = { task_id: string; nodes: PathNode[]; action?: 'pick' | 'drop' | null }
 export type TreeNode = {

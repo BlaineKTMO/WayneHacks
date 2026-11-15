@@ -118,6 +118,8 @@ class Dashboard(Construct):
             (apigw.HttpMethod.POST, "/planners/{version}/promote"),
             (apigw.HttpMethod.GET, "/sim"),
             (apigw.HttpMethod.POST, "/sim"),
+            (apigw.HttpMethod.POST, "/hazard"),
+            (apigw.HttpMethod.POST, "/demo/reset"),
         ]:
             http.add_routes(path=path, methods=[method],
                             integration=integrations.HttpLambdaIntegration(f"R{method.value}{path}", api_fn))

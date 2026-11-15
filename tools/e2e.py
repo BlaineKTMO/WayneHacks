@@ -94,10 +94,16 @@ def browser_mqtt(o: dict, token: str, client_id: str):
     c = ci.get_credentials_for_identity(IdentityId=ident, Logins=logins)["Credentials"]
     prov = auth.AwsCredentialsProvider.new_static(c["AccessKeyId"], c["SecretKey"], c["SessionToken"])
     closed = threading.Event()
+    def resumed(connection, return_code, session_present, **_):
+        print(f"    (mqtt reconnected, session_present={session_present})")
+        if not session_present:  # same as the dashboard: resubscribe after losing the session
+            connection.resubscribe_existing_topics()
+
     conn = mqtt_connection_builder.websockets_with_default_aws_signing(
         endpoint=o["IotEndpointOut"], region=REGION, credentials_provider=prov, client_id=client_id,
-        clean_session=True, keep_alive_secs=30,
-        on_connection_interrupted=lambda **_: closed.set(), on_connection_closed=lambda *a, **k: closed.set())
+        clean_session=False, keep_alive_secs=30, on_connection_resumed=resumed,
+        on_connection_interrupted=lambda connection, error, **_: (print(f"    (mqtt interrupted: {error})"), closed.set()),
+        on_connection_closed=lambda *a, **k: closed.set())
     conn.connect().result(timeout=15)
     return conn, closed
 
@@ -160,6 +166,16 @@ def main():
             check("hosted fleet task running", bool(hs.get("running")), str(hs))
             time.sleep(15)  # first poses after boot
 
+        print("\n== Demo reset")
+        st, body = api(o, token, "/demo/reset", "POST")
+        check("POST /demo/reset", st == 200, str(body))
+        _, pl = api(o, token, "/pallets")
+        check("pallets back at their starting slots", {p["pallet_id"]: p["node"] for p in pl}.get("pallet_3") == "slot_A3")
+        _, pls = api(o, token, "/planners")
+        check("naive planner in production, counters zeroed",
+              any(p["version"] == "v1-naive" and p["stage"] == "prod" for p in pls) and all(not p["shadow_runs"] for p in pls))
+        time.sleep(3)  # let forklifts settle after the reset's empty paths
+
         print("\n== API")
         st, _ = api(o, None, "/forklifts")
         check("API rejects requests without a token", st == 401, f"HTTP {st}")
@@ -202,6 +218,23 @@ def main():
         check("plan validated and running", rn is not None, rn[1].get("planner_version", "") if rn else "")
         if rn and rn[1].get("planner_version") == "fallback-rules":
             check("planned by Claude (not the rule fallback)", False, "Bedrock unavailable")
+        # Safety: put a person on the next stop of the assigned forklift's route.
+        fid = rn[1].get("assigned_to") if rn else None
+        pth = inbox.wait(lambda t, d: fid and t == f"fleet/{fid}/path" and len(d.get("nodes", [])) > 1, 20, t0)
+        if pth:
+            nxt = pth[1]["nodes"][1]
+            t1 = time.time()
+            api(o, token, "/hazard", "POST", {"x": nxt["x"], "y": nxt["y"]})
+            ss = inbox.wait(lambda t, d: t == f"fleet/{fid}/event" and d.get("type") == "safety_stop", 15, t1)
+            check("person in path -> edge safety stop", ss is not None, f"{fid} near {nxt['id']}")
+            time.sleep(3)
+            t2 = time.time()
+            api(o, token, "/hazard", "POST", {"clear": True})
+            sc = inbox.wait(lambda t, d: t == f"fleet/{fid}/event" and d.get("type") == "safety_clear", 15, t2)
+            check("person gone -> forklift resumes", sc is not None)
+        else:
+            check("person in path -> edge safety stop", False, "no path seen")
+        check("browser MQTT still connected after safety events", not closed.is_set())
         sh = inbox.wait(lambda t, d: t == f"tasks/{task_id}/shadow", 45, t0)
         check("shadow planner scored", sh is not None,
               f"{sh[1].get('planner_version')} {sh[1].get('sim_cost')} vs prod {sh[1].get('prod_sim_cost')}" if sh else "")

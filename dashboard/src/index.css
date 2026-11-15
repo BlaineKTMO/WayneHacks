@@ -286,3 +286,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .sim-switch.on .sim-knob { background: var(--ok); }
 .sim-switch.on .sim-knob::after { transform: translateX(11px); }
 a.btn-ghost { text-decoration: none; }
+
+/* ---------- People ---------- */
+.map .person-zone { fill: rgba(255,77,94,.12); stroke: #ff4d5e; stroke-width: .003; stroke-dasharray: .012 .008; animation: blink 1.2s steps(2) infinite; }
+.map .person-dot { fill: #ff4d5e; }

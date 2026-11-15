@@ -111,6 +111,54 @@ def sim_set(on: bool) -> dict:
     return sim_status()
 
 
+VIRTUAL = "virtual-demo"
+
+
+def set_hazard(body: dict) -> dict:
+    """Demo: put a (virtual) person on the floor, or clear it. Published retained on the same topic the
+    real camera detector uses, so the edge safety guard reacts exactly as it would to a real person."""
+    if body.get("clear"):
+        objects = []
+    else:
+        x, y = float(body["x"]), float(body["y"])
+        objects = [{"cls": "person", "x": round(x, 3), "y": round(y, 3), "conf": 1.0}]
+    msg = {"model_version": VIRTUAL, "objects": objects, "ts": int(time.time() * 1000)}
+    publish(topics.DETECTIONS, msg, retain=True)
+    return msg
+
+
+def reset_demo() -> dict:
+    """Back to the opening scene between judges: pallets home, nothing running, no reservations,
+    no person on the floor, naive planner in prod with fresh head-to-head counters."""
+    now = int(time.time() * 1000)
+    for item in scan("EDGE_LOCKS_TABLE"):
+        table("EDGE_LOCKS_TABLE").delete_item(Key={"edge_id": item["edge_id"]})
+    cancelled = 0
+    for t in scan("TASKS_TABLE"):
+        if t.get("status") in ("planning", "running", "received"):
+            table("TASKS_TABLE").update_item(Key={"task_id": t["task_id"]}, UpdateExpression="SET #s = :c, finished_at = :t",
+                                             ExpressionAttributeNames={"#s": "status"},
+                                             ExpressionAttributeValues={":c": "cancelled", ":t": now})
+            publish(topics.task_status(t["task_id"]), {"state": "cancelled", "text": t.get("text")})
+            cancelled += 1
+    for f in scan("FORKLIFTS_TABLE"):
+        table("FORKLIFTS_TABLE").update_item(
+            Key={"forklift_id": f["forklift_id"]},
+            UpdateExpression="REMOVE current_task, route, route_task, route_action, window_end, blocked_since, blocked_first")
+        publish(topics.path(f["forklift_id"]), {"task_id": "reset", "nodes": [], "action": None})  # stop driving
+    for pid, node in GRAPH.pallets.items():
+        table("PALLETS_TABLE").put_item(Item={"pallet_id": pid, "node": node})
+    for p in scan("PLANNERS_TABLE"):
+        stage = {"v1-naive": "prod", "v2-sonnet": "shadow"}.get(p["version"], p.get("stage"))
+        table("PLANNERS_TABLE").update_item(
+            Key={"version": p["version"]}, UpdateExpression="SET stage = :s REMOVE shadow_runs, shadow_wins, shadow_cost_sum",
+            ExpressionAttributeValues={":s": stage})
+    set_hazard({"clear": True})
+    publish(topics.LOCKS, {"locks": {}, "ts": now})
+    publish("planners/promoted", {"version": "v1-naive", "previous": None, "ts": now, "reset": True})
+    return {"reset": True, "cancelled_tasks": cancelled}
+
+
 def handler(event, _ctx):
     route = event["routeKey"]
     params = event.get("pathParameters") or {}
@@ -147,6 +195,10 @@ def handler(event, _ctx):
             if not isinstance(body.get("on"), bool):
                 return err(400, "bad_request", 'body must be {"on": true|false}')
             return ok(sim_set(body["on"]))
+        if route == "POST /hazard":
+            return ok(set_hazard(json.loads(event.get("body") or "{}")))
+        if route == "POST /demo/reset":
+            return ok(reset_demo())
         if route == "POST /iot/attach":
             return ok(attach_iot(event))
         return err(404, "not_found", route)

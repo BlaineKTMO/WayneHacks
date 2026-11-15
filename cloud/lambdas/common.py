@@ -38,9 +38,9 @@ def from_ddb(obj):
     return obj
 
 
-def publish(topic: str, payload: dict | str) -> None:
+def publish(topic: str, payload: dict | str, retain: bool = False) -> None:
     global _iot
     if _iot is None:
         _iot = boto3.client("iot-data", endpoint_url=f"https://{os.environ['IOT_ENDPOINT']}")
     body = payload if isinstance(payload, str) else json.dumps(payload)
-    _iot.publish(topic=topic, qos=1, payload=body.encode())
+    _iot.publish(topic=topic, qos=1, retain=retain, payload=body.encode())
