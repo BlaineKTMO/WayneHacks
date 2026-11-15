@@ -37,7 +37,8 @@ function Page({ cfg }: { cfg: Config }) {
   const [toast, setToast] = useState<string>()
   const [view, setView] = useState<'3d' | '2d'>('3d')
   const [now, setNow] = useState(Date.now())
-  useEffect(() => { if (!selected && ids.length) setSelected(ids[0]) }, [ids.join(), selected])
+  const firstId = ids[0]
+  useEffect(() => { if (!selected && firstId) setSelected(firstId) }, [firstId, selected])
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(undefined), 2600); return () => clearTimeout(t) }, [toast])
 

@@ -5,6 +5,8 @@ The rule SQL adds `forklift_id` (from the topic) and `kind` ("telemetry" | "even
 
 import logging
 
+from botocore.exceptions import ClientError
+
 import traffic
 import tree_runner
 
@@ -29,8 +31,9 @@ def handler(msg, _ctx):
 
     updates = {"last_seen": now_ms()}
     if kind == "telemetry":
-        updates |= {"state": parsed.state, "battery_v": parsed.battery_v,
-                    "motor_a": parsed.motor_a, "node": parsed.node}
+        updates |= {"state": parsed.state, "battery_v": parsed.battery_v, "motor_a": parsed.motor_a}
+        if parsed.node:  # optional in the contract: never overwrite a known node with null
+            updates["node"] = parsed.node
     elif kind == "pose":
         updates |= {"pose": {"x": parsed.x, "y": parsed.y, "theta": parsed.theta, "conf": parsed.conf}}
     elif kind == "event":
@@ -40,7 +43,7 @@ def handler(msg, _ctx):
 
     names = {f"#{k}": k for k in updates}
     values = {f":{k}": v for k, v in to_ddb(updates).items()}
-    old = table("FORKLIFTS_TABLE").update_item(
+    table("FORKLIFTS_TABLE").update_item(
         Key={"forklift_id": fid},
         UpdateExpression="SET " + ", ".join(f"#{k} = :{k}" for k in updates),
         ExpressionAttributeNames=names,
@@ -53,12 +56,30 @@ def handler(msg, _ctx):
         if parsed.type == "node_reached":
             traffic.on_node_reached(fid, parsed.node)
         elif parsed.type in ("done", "fault"):
+            if not first_delivery(fid, parsed.ts):
+                log.info("duplicate %s from %s (ts %s) ignored", parsed.type, fid, parsed.ts)
+                return
             traffic.on_done(fid, parsed.node)
             on_task_event(fid, parsed.type)
         elif parsed.type == "blocked":
             gave_up = traffic.on_blocked(fid)
             if gave_up:
                 on_task_event(fid, "fault", gave_up)
+
+
+def first_delivery(fid: str, ts: int) -> bool:
+    """IoT and Lambda retries can deliver the same done/fault twice; processing it twice would
+    mark the NEXT plan step finished. Record the event ts with a conditional write: repeats fail."""
+    try:
+        table("FORKLIFTS_TABLE").update_item(
+            Key={"forklift_id": fid}, UpdateExpression="SET last_step_ts = :ts",
+            ConditionExpression="attribute_not_exists(last_step_ts) OR last_step_ts <> :ts",
+            ExpressionAttributeValues={":ts": ts})
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+            return False
+        raise
 
 
 def on_task_event(fid: str, event_type: str, error: str | None = None) -> None:

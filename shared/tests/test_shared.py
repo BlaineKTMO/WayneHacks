@@ -28,7 +28,7 @@ def test_graph_astar():
     assert path[0] == "dock_A" and path[-1] == "slot_A4"
     # Block the direct lane and it must route around
     blocked = g.astar("dock_A", "j3", blocked_edges=[edge_id("j1", "j3")])
-    assert blocked is not None and edge_id("j1", "j3") not in {edge_id(a, b) for a, b in zip(blocked, blocked[1:])}
+    assert blocked is not None and edge_id("j1", "j3") not in {edge_id(a, b) for a, b in zip(blocked, blocked[1:], strict=False)}
     assert g.nearest_node(0.11, 0.21) == "dock_A"
 
 

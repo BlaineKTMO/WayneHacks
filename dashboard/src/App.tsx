@@ -66,9 +66,10 @@ export function ConsoleView({ fleet, email, signOut, cfg }: { fleet: Fleet; emai
   const [text, setText] = useState('')
   const [now, setNow] = useState(Date.now())
 
+  const firstId = ids[0]
   useEffect(() => {
-    if (!selected && ids.length) setSelected(ids[0])
-  }, [ids.join(), selected])
+    if (!selected && firstId) setSelected(firstId)
+  }, [firstId, selected])
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(t)

@@ -36,8 +36,8 @@ def test_sim_completes_laps():
     try:
         link._t = 0.0
         while f.laps < 1 and t < 120:
-            l, r = f.update(link.x, link.y, link.theta)
-            link.wheels(l, r)
+            left, right = f.update(link.x, link.y, link.theta)
+            link.wheels(left, right)
             clock[0] += dt
             t += dt
     finally:

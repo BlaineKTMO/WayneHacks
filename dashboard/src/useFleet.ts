@@ -6,6 +6,10 @@ import type { Config } from './config'
 import type { FleetEvent, Forklift, Graph, LogEntry, Path, Pose, Task, TaskStatus, Telemetry } from './types'
 
 export type Conn = 'connecting' | 'live' | 'offline'
+type ForkliftRow = {
+  forklift_id: string; pose?: Pose; state?: Forklift['state']; battery_v?: number
+  node?: string | null; last_event?: string; current_task?: string | null
+}
 const TRAIL_LEN = 40
 const LOG_LEN = 200
 
@@ -43,7 +47,7 @@ export function useFleet(cfg: Config) {
     })
 
   const onMessage = useCallback((topic: string, raw: Uint8Array) => {
-    let msg: any
+    let msg: any // eslint-disable-line @typescript-eslint/no-explicit-any -- MQTT JSON, narrowed per topic below
     try {
       msg = JSON.parse(new TextDecoder().decode(raw))
     } catch {
@@ -148,7 +152,7 @@ export function useFleet(cfg: Config) {
     async function load() {
       const [g, fl, ts, pl] = await Promise.all([
         api<Graph>(cfg, '/graph'),
-        api<any[]>(cfg, '/forklifts'),
+        api<ForkliftRow[]>(cfg, '/forklifts'),
         api<Task[]>(cfg, '/tasks'),
         api<{ pallet_id: string; node: string }[]>(cfg, '/pallets'),
       ])
