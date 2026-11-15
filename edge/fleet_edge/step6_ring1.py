@@ -46,8 +46,10 @@ def main():
         camera = Camera()
         detector, localizer = TagDetector(), Localizer(camera.K)
         follower.border = border_from_camera(localizer, config.CAMERA_WIDTH, config.CAMERA_HEIGHT)
-        print("border for tag 13:", "none (no table map yet)" if follower.border is None else
-              " ".join(f"({x*1000:.0f},{y*1000:.0f})" for x, y in follower.border) + " mm")
+        if follower.border is None:
+            print("border: none (no table map yet)")
+        for t, poly in (follower.border or {}).items():
+            print(f"border for tag {t}:", " ".join(f"({x*1000:.0f},{y*1000:.0f})" for x, y in poly) + " mm")
 
     Path(args.log).parent.mkdir(parents=True, exist_ok=True)
     log = csv.writer(open(args.log, "w", newline=""))
@@ -101,9 +103,9 @@ def main():
                 link.wheels(left, right)
                 status = f"{follower.mode.upper()}  L={left} R={right}"
                 if follower.mode == "blocked":
-                    status = "BLOCKED: every move would take tag 13 out of view"
+                    status = "BLOCKED: every move would take every forklift tag out of view"
                 elif follower.mode == "border":
-                    status = "BORDER: tag 13 drifted outside the border"
+                    status = "BORDER: every forklift tag drifted outside the border"
                 elif follower.mode == "drift_stop":
                     status = "DRIFT_STOP: spins keep sliding instead of turning on the spot"
             tele = link.poll()

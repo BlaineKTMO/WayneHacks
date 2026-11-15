@@ -17,7 +17,7 @@ def test_motor_proto(tmp_path):
         [CC, "-std=c11", "-Wall", "-Wextra", "-Werror", "-o", str(exe),
          str(HERE / "test_motor_proto.c"), str(HERE.parent / "main" / "motor_proto.c"),
          str(HERE.parent / "main" / "byte_ring.c"),
-         str(HERE.parent / "main" / "rf_proto.c")],
+         str(HERE.parent / "main" / "rf_proto.c"), str(HERE.parent / "main" / "rf_sched.c")],
         check=True,
     )
     result = subprocess.run([str(exe)], capture_output=True, text=True)
@@ -37,3 +37,13 @@ def test_python_and_firmware_agree():
     t = parse_line("T,DRIVING,0.00")
     assert t is not None and t.state == "DRIVING" and t.battery_v == 0.0
     assert parse_line("[forklift] breakout ready") is None   # firmware DIAG lines are ignored
+
+
+@pytest.mark.skipif(CC is None, reason="no C compiler on PATH")
+def test_vtext_rotation(tmp_path):
+    """The forklifts' portrait screens: rotated glyphs land where they should."""
+    exe = tmp_path / "test_vtext"
+    subprocess.run([CC, "-std=c11", "-Wall", "-Wextra", "-Werror", "-DHOST_TEST", "-o", str(exe),
+                    str(HERE / "test_vtext.c"), str(HERE.parent / "display" / "vtext.c")], check=True)
+    result = subprocess.run([str(exe)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stdout + result.stderr

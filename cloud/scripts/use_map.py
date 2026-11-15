@@ -61,7 +61,7 @@ def main():
     docks = [n.id for n in g.nodes.values() if n.type == "dock"]
     roster = g.forklift_homes or {"fl-01": docks[0], "fl-02": docks[1 % len(docks)]}
     if name == "table":
-        roster = {"fl-01": docks[0]}            # one real forklift on the tabletop
+        roster = {"fl-01": docks[0], "fl-02": docks[1 % len(docks)]}   # two real forklifts on the tabletop
     fl = ddb.Table(T("Forklifts"))
     for f in fl.scan()["Items"]:
         if f["forklift_id"] not in roster:

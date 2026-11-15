@@ -27,6 +27,10 @@
  * breakout I2C pins hdr 10 SDA / hdr 8 SCL relays the same text lines, wifi_link.h), or
  * over RADIO from a base-station OG on the laptop (CC1101, 915 MHz, rf_link.h).
  * All three feed the same parser and the same 500 ms watchdog; telemetry goes to all.
+ *
+ * Builds (CMakeLists.txt): forklift_main = fl-01 (radio id 1, fork); fl02_main = fl-02
+ * (radio id 2, FORKLIFT_HAS_FORK=0: no driver 3, hdr 1 / hdr 3 are never touched, and F
+ * lines are accepted (they feed the watchdog) but do nothing).
  */
 #include "fwog_main.h"
 #include "hardware/clocks.h"
@@ -55,6 +59,9 @@ FWOG_WATCHDOG_DEFAULT();
 #define PIN_LEFT_B  25u   /* hdr 17 */
 #define PIN_RIGHT_A 14u   /* hdr 15 */
 #define PIN_RIGHT_B 15u   /* hdr 13 */
+#ifndef FORKLIFT_HAS_FORK
+#define FORKLIFT_HAS_FORK 1
+#endif
 #define PIN_FORK_A  13u   /* hdr 1  */
 #define PIN_FORK_B  27u   /* hdr 3  */
 
@@ -81,7 +88,7 @@ static bool s_fork_moving;
 static absolute_time_t s_fork_until;
 static char s_ip[IP_TEXT_MAX + 1];   /* last "I,<ip>" from the WiFi module, "" if none */
 #define RF_RETRY_MS 2000u
-#define RF_QUIET_MS 200u     /* no radio command this long: base is idle-listening */
+#define RF_QUIET_MS 200u     /* channel silent this long: base is idle-listening */
 #define RF_REPLY_GAP_MS 5u   /* after a command, before replying: the base is back in RX */
 static bool s_rf_telem_due;          /* telemetry waiting for a free slot on the air */
 static uint8_t s_rf_seq;
@@ -112,7 +119,7 @@ static void wheels_brake(void) {
 }
 
 static void fork_brake(void) {
-    if (s_io_ready) {
+    if (FORKLIFT_HAS_FORK && s_io_ready) {
         set_pct(PIN_FORK_A, 0);
         (void)fwog_io_pin_drive(PIN_FORK_B, false);
     }
@@ -136,6 +143,7 @@ static void apply_wheels(int left, int right) {
 
 /* Returns false if the BSP refused the fork's on/off pin. */
 static bool apply_fork(int speed, uint32_t ms) {
+    if (!FORKLIFT_HAS_FORK) return true;   /* no fork on this forklift: nothing to drive */
     if (speed == 0 || ms == 0) {
         fork_brake();
         return true;
@@ -213,14 +221,14 @@ static void try_io_ready(void) {
         set_state(FL_FAULT);
         return;
     }
-    if (fwog_io_pin_drive(PIN_FORK_B, false) != FWOG_IO_PIN_OK) {
+    if (FORKLIFT_HAS_FORK && fwog_io_pin_drive(PIN_FORK_B, false) != FWOG_IO_PIN_OK) {
         DIAG("[forklift] fork pin (hdr 3) refused; retrying\n");
         set_state(FL_FAULT);
         return;
     }
     pwm_pin_init(PIN_RIGHT_A);
     pwm_pin_init(PIN_RIGHT_B);
-    pwm_pin_init(PIN_FORK_A);
+    if (FORKLIFT_HAS_FORK) pwm_pin_init(PIN_FORK_A);
     s_io_ready = true;
     DIAG("[forklift] breakout ready\n");
     set_state(FL_IDLE);
@@ -297,7 +305,7 @@ int main(void) {
     absolute_time_t next_telemetry = make_timeout_time_ms(TELEMETRY_MS);
     absolute_time_t next_retry = make_timeout_time_ms(CONFIG_RETRY_MS);
     absolute_time_t next_rf_retry = get_absolute_time();
-    absolute_time_t last_rf_cmd = nil_time;
+    absolute_time_t last_rf_any = nil_time;   /* last packet of ours heard, for anyone */
 
     while (true) {
         board_watchdog_kick();
@@ -319,19 +327,20 @@ int main(void) {
         }
         uint8_t pkt[RF_PAYLOAD_LEN];
         char rf_line[RF_TEXT_MAX + 1];
-        bool rf_cmd_now = false;
-        if (rf_link_poll(pkt, sizeof pkt, NULL) == (int)RF_PAYLOAD_LEN &&
-            rf_unpack(pkt, RF_PAYLOAD_LEN, RF_KIND_CMD, RF_FORKLIFT_ID, rf_line, NULL)) {
-            handle_line(rf_line, &last_cmd);
-            last_rf_cmd = get_absolute_time();
-            rf_cmd_now = true;
+        bool rf_polled = false;
+        if (rf_link_poll(pkt, sizeof pkt, NULL) == (int)RF_PAYLOAD_LEN) {
+            last_rf_any = get_absolute_time();          /* someone is using the channel */
+            const bool cmd = rf_unpack(pkt, RF_PAYLOAD_LEN, RF_KIND_CMD, RF_FORKLIFT_ID, rf_line, NULL);
+            rf_polled = !cmd && rf_unpack(pkt, RF_PAYLOAD_LEN, RF_KIND_POLL, RF_FORKLIFT_ID, rf_line, NULL);
+            if (cmd || rf_polled) handle_line(rf_line, &last_cmd);
         }
-        /* Reply slot: wait RF_REPLY_GAP_MS after a command so the base (which needs
-           ~1 ms to recalibrate and get back into RX after sending) is listening. */
-        if (rf_cmd_now && s_rf_telem_due) sleep_ms(RF_REPLY_GAP_MS);
+        /* Telemetry goes out only in our turn (rf_proto.h): right after a POLL addressed
+           to us, RF_REPLY_GAP_MS later so the base is back in RX. Or, if the channel has
+           been silent for RF_QUIET_MS (the laptop stopped sending), on our own. */
+        if (rf_polled && s_rf_telem_due) sleep_ms(RF_REPLY_GAP_MS);
         if (s_rf_telem_due && rf_link_ok() &&
-            (rf_cmd_now || is_nil_time(last_rf_cmd) ||
-             absolute_time_diff_us(last_rf_cmd, get_absolute_time()) > (int64_t)RF_QUIET_MS * 1000)) {
+            (rf_polled || is_nil_time(last_rf_any) ||
+             absolute_time_diff_us(last_rf_any, get_absolute_time()) > (int64_t)RF_QUIET_MS * 1000)) {
             rf_send_telemetry();
         }
 

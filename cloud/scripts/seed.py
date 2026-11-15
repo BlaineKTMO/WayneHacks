@@ -37,7 +37,7 @@ def main():
     ddb = boto3.resource("dynamodb", region_name=REGION)
     g = Graph.load()
     docks = [n.id for n in g.nodes.values() if n.type == "dock"]
-    roster = g.forklift_homes or ({"fl-01": docks[0]} if site != "demo" else {"fl-01": docks[0], "fl-02": docks[1]})
+    roster = g.forklift_homes or {"fl-01": docks[0], "fl-02": docks[1 % len(docks)]}   # wh1: two real forklifts
     with ddb.Table(T("Pallets")).batch_writer() as w:
         for pid, node in g.pallets.items():
             w.put_item(Item={"pallet_id": pid, "node": node})

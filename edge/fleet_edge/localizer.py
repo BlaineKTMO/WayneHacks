@@ -88,14 +88,25 @@ class Camera:
 
 
 class TagDetector:
+    """Full-resolution detection, plus a half-resolution retry when an expected tag
+    (corner or forklift) is missing. Measured: tag 13 with wires right up to its white
+    border was missed at full resolution but decoded cleanly at half (margin 100); the
+    clutter breaks the fine edge segmentation, the coarser pass smooths it over."""
+
     def __init__(self):
         from pupil_apriltags import Detector
         self.det = Detector(families=config.TAG_FAMILY, quad_decimate=1.0)
+        self.coarse = Detector(families=config.TAG_FAMILY, quad_decimate=2.0)
+        self.expected = set(config.CORNER_TAGS) | set(config.FORKLIFT_TAGS)
 
     def detect(self, frame: np.ndarray) -> list[TagSighting]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        found = list(self.det.detect(gray))
+        ids = {d.tag_id for d in found}
+        if not self.expected <= ids:
+            found += [d for d in self.coarse.detect(gray) if d.tag_id not in ids]
         out = []
-        for d in self.det.detect(gray):
+        for d in found:
             c = d.corners  # (4,2): bottom-left, bottom-right, top-right, top-left of the tag
             # Tag "up" = from bottom edge midpoint to top edge midpoint.
             bottom, top = (c[0] + c[1]) / 2, (c[2] + c[3]) / 2
@@ -194,30 +205,47 @@ class Localizer:
             x, y = x + (self.cam_pos[0] - x) * k, y + (self.cam_pos[1] - y) * k
         return float(x), float(y)
 
+    def tag_world(self, s: "TagSighting", mount: dict) -> tuple[float, float, float]:
+        """A forklift tag's centre (x, y) at its height, and the raw heading of its "up"."""
+        h = mount["height"]
+        x, y = self.to_world(s.center_px, h)
+        # Map a point a little "up" the tag the same way, so camera tilt doesn't skew it.
+        ux = s.center_px[0] + 20 * math.cos(s.heading_px)
+        uy = s.center_px[1] + 20 * math.sin(s.heading_px)
+        hx, hy = self.to_world((ux, uy), h)
+        return x, y, math.atan2(hy - y, hx - x)
+
     def process(self, sightings: list[TagSighting]) -> dict[str, ForkliftPose]:
-        """Returns the latest filtered pose for every forklift seen this frame."""
+        """Returns the latest filtered pose for every forklift seen this frame. Every tag a
+        forklift carries (config.TAG_MOUNTS) gives an estimate; they're combined."""
         if not self.update_homography(sightings):
             return {}
         now = time.monotonic()
-        h = config.FORKLIFT_TAG_HEIGHT_M
-        result = {}
+        per_fid: dict[str, list] = {}
         for s in sightings:
             fid = config.FORKLIFT_TAGS.get(s.tag_id)
-            if not fid:
-                continue
-            x, y = self.to_world(s.center_px, h)
-            # Heading: map a point a little "up" the tag the same way, so camera tilt
-            # doesn't skew the angle.
-            ux = s.center_px[0] + 20 * math.cos(s.heading_px)
-            uy = s.center_px[1] + 20 * math.sin(s.heading_px)
-            hx, hy = self.to_world((ux, uy), h)
-            theta = math.atan2(hy - y, hx - x) + config.TAG_HEADING_OFFSET
+            mount = config.TAG_MOUNTS.get(s.tag_id)
+            if fid and mount:
+                per_fid.setdefault(fid, []).append((s, mount))
+        result = {}
+        for fid, tags in per_fid.items():
+            seen = [(m, *self.tag_world(s, m)) for s, m in tags]
+            if len(seen) >= 2:
+                # Heading from the line between two tags: its direction in the world minus
+                # its direction on the chassis.
+                (m1, x1, y1, _), (m2, x2, y2, _) = seen[0], seen[1]
+                theta = (math.atan2(y2 - y1, x2 - x1)
+                         - math.atan2(m2["left"] - m1["left"], m2["fwd"] - m1["fwd"]))
+            else:
+                m, _, _, raw = seen[0]
+                theta = raw + m["heading"]
             theta = (theta + math.pi) % (2 * math.pi) - math.pi   # keep in [-pi, pi)
-            # Tag position -> chassis centre.
-            fwd, left = config.TAG_OFFSET_FORWARD_M, config.TAG_OFFSET_LEFT_M
-            x -= fwd * math.cos(theta) - left * math.sin(theta)
-            y -= fwd * math.sin(theta) + left * math.cos(theta)
-            result[fid] = self._filter(ForkliftPose(fid, x, y, theta, 1.0, now))
+            c, sn = math.cos(theta), math.sin(theta)
+            # Each tag's position -> the turning point; average them.
+            xs = [x - (m["fwd"] * c - m["left"] * sn) for m, x, y, _ in seen]
+            ys = [y - (m["fwd"] * sn + m["left"] * c) for m, x, y, _ in seen]
+            result[fid] = self._filter(ForkliftPose(fid, sum(xs) / len(xs), sum(ys) / len(ys),
+                                                    theta, 1.0, now))
         return result
 
     def _filter(self, p: ForkliftPose) -> ForkliftPose:
