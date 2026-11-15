@@ -245,3 +245,8 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .tlabel-planning { color: #c9b6ff; }
 .tstat-planning { background: #c9b6ff; }
 .tlabel-cancelled { color: var(--dim); }
+
+/* ---------- Reservations ---------- */
+.map .reserved-lane { stroke-width: .05; stroke-opacity: .16; stroke-linecap: round; pointer-events: none; }
+.map .reserved-node { fill: none; stroke-width: .004; stroke-dasharray: .012 .008; opacity: .9; pointer-events: none; }
+.lg-res { border: 1px dashed var(--accent); background: rgba(255,176,32,.12); }

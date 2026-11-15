@@ -8,7 +8,7 @@ tree finishes. Per-node status lives in the task's `tree` attribute in FleetTask
 dashboard can render it live from tasks/{id}/status.
 
 Leaf -> action:
-  GoTo(n)      plan A* route, publish fleet/{id}/path            (waits for "done")
+  GoTo(n)      traffic.start_route: reserved, windowed A* route   (waits for "done")
   Pick(p)      publish a 1-node path with action "pick"          (waits for "done")
   Drop(s)      publish a 1-node path with action "drop"          (waits for "done")
   WaitUntil    succeeds immediately for now (Ring 4: edge locks)
@@ -22,7 +22,7 @@ from common import from_ddb, publish, table, to_ddb
 from fleet_shared import topics
 from fleet_shared.graph import Graph
 from fleet_shared.messages import Path, TaskStatus, now_ms
-from route_planner import plan
+import traffic
 
 log = logging.getLogger()
 GRAPH = Graph.load()
@@ -41,15 +41,12 @@ def _start_leaf(n: dict, ctx: Ctx) -> str:
     if t == "WaitUntil":
         return "success"
     if t == "GoTo":
-        if ctx.node == n["node"]:
-            return "success"
         try:
-            path = plan(ctx.fid, n["node"], ctx.task_id)
+            moving = traffic.start_route(ctx.fid, n["node"], ctx.task_id)
         except ValueError as e:
             n["error"] = str(e)
             return "failure"
-        publish(topics.path(ctx.fid), path)
-        return "running"
+        return "running" if moving else "success"
     if t in ("Pick", "Drop"):
         if t == "Pick":
             where = table("PALLETS_TABLE").get_item(Key={"pallet_id": n["pallet"]}).get("Item", {}).get("node")
@@ -163,7 +160,7 @@ def start(task: dict, fid: str, tree: dict) -> None:
     _save_and_report(task, tree, fid)
 
 
-def on_event(fid: str, task_id: str, event_type: str) -> None:
+def on_event(fid: str, task_id: str, event_type: str, error: str | None = None) -> None:
     """Forklift `fid` reported done/fault while running `task_id`."""
     task = from_ddb(table("TASKS_TABLE").get_item(Key={"task_id": task_id}).get("Item") or {})
     tree = task.get("tree")
@@ -183,6 +180,6 @@ def on_event(fid: str, task_id: str, event_type: str) -> None:
                 table("PALLETS_TABLE").put_item(Item={"pallet_id": p["pallet_id"], "node": leaf["slot"], "last_seen": now_ms()})
     else:
         leaf["status"] = "failure"
-        leaf["error"] = f"forklift reported {event_type}"
+        leaf["error"] = error or f"forklift reported {event_type}"
     tick(tree, Ctx(fid, task_id))
     _save_and_report(task, tree, fid)

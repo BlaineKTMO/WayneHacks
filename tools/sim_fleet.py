@@ -38,6 +38,7 @@ START = {"fl-01": "dock_A", "fl-02": "dock_B"}
 TICK_S = 0.05            # 20 Hz control
 POSE_EVERY = 2           # 10 Hz pose
 TELEMETRY_EVERY = 20     # 1 Hz
+BLOCKED_EVERY = 40       # re-send "blocked" every 2 s while waiting at the end of a partial path
 
 
 class SimForklift:
@@ -49,6 +50,7 @@ class SimForklift:
         self.path: Path | None = None
         self.follower: WaypointFollower | None = None
         self.state = "IDLE"
+        self.waiting = False     # stopped at the end of a partial path
         self.inbox: queue.Queue = queue.Queue()   # messages from MQTT threads
 
     # -- MQTT callbacks just queue; all state changes happen in tick() on one thread
@@ -64,20 +66,21 @@ class SimForklift:
                     return
                 # First node is where we are; drive to the rest.
                 targets = p.nodes[1:] if p.nodes[0]["id"] == self.node and len(p.nodes) > 1 else p.nodes
-                self.path = Path(task_id=p.task_id, nodes=targets, action=p.action)
+                self.path = Path(task_id=p.task_id, nodes=targets, action=p.action, partial=p.partial)
                 self.follower = WaypointFollower([(n["x"], n["y"]) for n in targets], loop=False)
-                self.state = "DRIVING"
-                print(f"[{self.fid}] path {p.task_id}: {[n['id'] for n in targets]}")
+                self.state, self.waiting = "DRIVING", False
+                print(f"[{self.fid}] path {p.task_id}: {[n['id'] for n in targets]}{' (partial)' if p.partial else ''}")
             elif kind == "stop":
                 reason = Stop.from_json(payload).reason
                 self._stop_driving("STOPPED")
+                self.waiting = False
                 print(f"[{self.fid}] STOP ({reason})")
         except ValueError as e:
             print(f"[{self.fid}] bad {kind} message: {e}")
 
     def _stop_driving(self, state: str):
         self.link.stop(state.lower())
-        self.follower, self.path, self.state = None, None, state
+        self.follower, self.path, self.state, self.waiting = None, None, state, False
 
     def _event(self, type_: str, node: str | None):
         self.publish(topics.event(self.fid), Event(type=type_, node=node))
@@ -96,13 +99,22 @@ class SimForklift:
                 self.node = self.path.nodes[i]["id"]
                 self._event("node_reached", self.node)
             if self.follower.finished:
-                if self.path.action:
-                    time.sleep(0.5)  # pretend to raise/lower the forks
-                self._event("done", self.node)
-                print(f"[{self.fid}] done at {self.node}")
-                self._stop_driving("IDLE")
+                if self.path.partial:
+                    # End of the reserved window: wait here until the cloud extends the route.
+                    self.link.wheels(0, 0)
+                    self.follower, self.state, self.waiting = None, "BLOCKED", True
+                    self._event("blocked", self.node)
+                    print(f"[{self.fid}] waiting at {self.node} for the lane to clear")
+                else:
+                    if self.path.action:
+                        time.sleep(0.5)  # pretend to raise/lower the forks
+                    self._event("done", self.node)
+                    print(f"[{self.fid}] done at {self.node}")
+                    self._stop_driving("IDLE")
         else:
             self.link.wheels(0, 0)
+            if self.waiting and n % BLOCKED_EVERY == 0:
+                self._event("blocked", self.node)
 
         if n % POSE_EVERY == 0:
             self.publish(topics.pose(self.fid), Pose(x=round(self.link.x, 4), y=round(self.link.y, 4),

@@ -10,12 +10,13 @@ type Props = {
   forklifts: Record<string, Forklift>
   trails: Record<string, [number, number][]>
   pallets: Record<string, string>
+  locks?: Record<string, string>
   selected?: string
   onNodeClick: (node: string) => void
   onUnitClick: (id: string) => void
 }
 
-export function WarehouseMap({ graph, forklifts, trails, pallets, selected, onNodeClick, onUnitClick }: Props) {
+export function WarehouseMap({ graph, forklifts, trails, pallets, locks = {}, selected, onNodeClick, onUnitClick }: Props) {
   const { width: W, height: H } = graph.size
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]))
   const sy = (y: number) => H - y // world y up -> svg y down
@@ -66,6 +67,21 @@ export function WarehouseMap({ graph, forklifts, trails, pallets, selected, onNo
           </g>
         )
       })}
+
+      {/* Reservations: lanes where both ends are held by the same forklift */}
+      {graph.edges.map((e) => {
+        const h = locks[e.from]
+        if (!h || locks[e.to] !== h) return null
+        const a = byId[e.from], b = byId[e.to]
+        return <line key={`res-${e.from}-${e.to}`} x1={a.x} y1={sy(a.y)} x2={b.x} y2={sy(b.y)}
+                     className="reserved-lane" stroke={unitColour(h)} />
+      })}
+      {Object.entries(locks).map(([n, h]) => byId[n] && (
+        <rect key={`resn-${n}`} x={byId[n].x - 0.04} y={sy(byId[n].y) - 0.04} width={0.08} height={0.08} rx={0.012}
+              className="reserved-node" stroke={unitColour(h)}>
+          <title>{`${n} reserved by ${h}`}</title>
+        </rect>
+      ))}
 
       {/* Trails */}
       {Object.entries(trails).map(([id, pts]) =>

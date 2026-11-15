@@ -17,6 +17,7 @@ export function useFleet(cfg: Config) {
   const [pallets, setPallets] = useState<Record<string, string>>({})
   const [log, setLog] = useState<LogEntry[]>([])
   const [stops, setStops] = useState(0)
+  const [locks, setLocks] = useState<Record<string, string>>({})
   const [conn, setConn] = useState<Conn>('connecting')
   const [error, setError] = useState<string>()
   const client = useRef<MqttClient | null>(null)
@@ -107,6 +108,10 @@ export function useFleet(cfg: Config) {
         }
       }
     }
+    if (topic === 'warehouse/locks') {
+      setLocks((msg as { locks: Record<string, string> }).locks ?? {})
+      return
+    }
     if (p[0] === 'tasks' && p[2] === 'status') {
       const s = msg as TaskStatus
       upsertTask({ task_id: p[1], status: s.state, assigned_to: s.assigned_to, error: s.error,
@@ -154,7 +159,7 @@ export function useFleet(cfg: Config) {
           setConn('live')
           setError(undefined)
           addLog('ok', 'Connected to fleet network')
-          c.subscribe(['fleet/+/pose', 'fleet/+/telemetry', 'fleet/+/event', 'fleet/+/path', 'fleet/+/stop', 'tasks/+/status'])
+          c.subscribe(['fleet/+/pose', 'fleet/+/telemetry', 'fleet/+/event', 'fleet/+/path', 'fleet/+/stop', 'tasks/+/status', 'warehouse/locks'])
         })
         c.on('message', onMessage)
         c.on('error', (e) => setError(`MQTT: ${e.message}`))
@@ -191,7 +196,7 @@ export function useFleet(cfg: Config) {
   const publish = (topic: string, payload: object) => client.current?.publish(topic, JSON.stringify(payload), { qos: 1 })
 
   return {
-    graph, forklifts, trails, tasks, pallets, log, stops, conn, error,
+    graph, forklifts, trails, tasks, pallets, locks, log, stops, conn, error,
     goto: (forkliftId: string, node: string) => {
       addLog('info', `Dispatch to ${node}`, forkliftId)
       publish(`fleet/${forkliftId}/goto`, { node })

@@ -85,6 +85,7 @@ class Path(_Msg):
     task_id: str
     nodes: list  # list of {"id","x","y"} dicts
     action: Optional[str] = None  # "pick" | "drop" | None
+    partial: bool = False  # True: more of the route will follow; stop at the end and report "blocked"
 
     def validate(self):
         for n in self.nodes:
@@ -119,6 +120,12 @@ class Goto(_Msg):
 class Detections(_Msg):
     model_version: str
     objects: list  # [{"cls","x","y","conf"}]
+    ts: int = field(default_factory=now_ms)
+
+
+@dataclass
+class Locks(_Msg):
+    locks: dict  # node id -> forklift id holding it
     ts: int = field(default_factory=now_ms)
 
 

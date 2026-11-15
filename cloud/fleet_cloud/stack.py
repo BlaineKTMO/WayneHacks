@@ -103,6 +103,7 @@ class FleetStack(Stack):
             resources=[
                 self.format_arn(service="iot", resource="topic", resource_name="fleet/*"),
                 self.format_arn(service="iot", resource="topic", resource_name="tasks/*"),
+                self.format_arn(service="iot", resource="topic", resource_name="warehouse/*"),
             ],
         )
 
@@ -110,12 +111,13 @@ class FleetStack(Stack):
         forklifts.grant_read_write_data(ingest)
         tasks.grant_read_write_data(ingest)
         pallets.grant_read_write_data(ingest)  # tree runner updates pallet locations on Pick/Drop
+        edge_locks.grant_read_write_data(ingest)  # traffic control: reservations
         ingest.add_to_role_policy(publish_policy)
 
         planner = fn("RoutePlanner", "route_planner.handler")
         forklifts.grant_read_write_data(planner)
         tasks.grant_read_write_data(planner)
-        edge_locks.grant_read_data(planner)
+        edge_locks.grant_read_write_data(planner)
         planner.add_to_role_policy(publish_policy)
 
         dispatch = fn("Dispatch", "dispatch.handler", timeout=60)
@@ -123,6 +125,7 @@ class FleetStack(Stack):
         forklifts.grant_read_write_data(dispatch)
         pallets.grant_read_write_data(dispatch)
         planners.grant_read_data(dispatch)
+        edge_locks.grant_read_write_data(dispatch)
         dispatch.add_to_role_policy(publish_policy)
         # Ring 3: Claude on Bedrock writes behavior trees. Converse = bedrock:InvokeModel.
         # `us.` inference profiles route to Claude models in US Regions, so the foundation-model

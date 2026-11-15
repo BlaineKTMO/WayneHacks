@@ -5,6 +5,7 @@ The rule SQL adds `forklift_id` (from the topic) and `kind` ("telemetry" | "even
 
 import logging
 
+import traffic
 import tree_runner
 
 from common import publish, table, to_ddb
@@ -46,11 +47,21 @@ def handler(msg, _ctx):
         ExpressionAttributeValues=values,
     )
 
-    if kind == "event" and parsed.type in ("done", "fault"):
-        on_task_event(fid, parsed.type)
+    if kind == "telemetry":
+        traffic.renew(fid, parsed.node)
+    elif kind == "event":
+        if parsed.type == "node_reached":
+            traffic.on_node_reached(fid, parsed.node)
+        elif parsed.type in ("done", "fault"):
+            traffic.on_done(fid, parsed.node)
+            on_task_event(fid, parsed.type)
+        elif parsed.type == "blocked":
+            gave_up = traffic.on_blocked(fid)
+            if gave_up:
+                on_task_event(fid, "fault", gave_up)
 
 
-def on_task_event(fid: str, event_type: str) -> None:
+def on_task_event(fid: str, event_type: str, error: str | None = None) -> None:
     """The forklift finished (or faulted) its current step: advance whatever task it's running."""
     item = table("FORKLIFTS_TABLE").get_item(Key={"forklift_id": fid}).get("Item") or {}
     task_id = item.get("current_task")
@@ -58,7 +69,7 @@ def on_task_event(fid: str, event_type: str) -> None:
         return
     task = table("TASKS_TABLE").get_item(Key={"task_id": task_id}).get("Item") or {}
     if task.get("tree"):
-        tree_runner.on_event(fid, task_id, event_type)  # behavior tree: next step
+        tree_runner.on_event(fid, task_id, event_type, error)  # behavior tree: next step
         return
     # Plain goto from the map: the task is the single route.
     state = "done" if event_type == "done" else "failed"
@@ -69,4 +80,5 @@ def on_task_event(fid: str, event_type: str) -> None:
         ExpressionAttributeValues={":s": state, ":t": now_ms()},
     )
     table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fid}, UpdateExpression="REMOVE current_task")
-    publish(topics.task_status(task_id), TaskStatus(state=state, assigned_to=fid, text=task.get("text")).to_dict())
+    publish(topics.task_status(task_id), TaskStatus(state=state, assigned_to=fid, text=task.get("text"),
+                                                    error=error).to_dict())

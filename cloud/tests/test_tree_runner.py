@@ -1,58 +1,32 @@
-"""Run a whole pick-and-drop task through tree_runner with fake DynamoDB and MQTT."""
+"""Run whole behavior-tree tasks through tree_runner + traffic with fake AWS."""
 
 import os
 
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-2")
 
-import route_planner  # noqa: E402
+import traffic  # noqa: E402
 import tree_runner  # noqa: E402
+from fakes import install, paths  # noqa: E402
 from fleet_shared.behavior_tree import with_status  # noqa: E402
 
 
-class FakeTable:
-    def __init__(self, key, items):
-        self.key, self.items = key, {i[key]: dict(i) for i in items}
-
-    def get_item(self, Key):
-        k = Key[self.key]
-        return {"Item": dict(self.items[k])} if k in self.items else {}
-
-    def put_item(self, Item):
-        self.items[Item[self.key]] = dict(Item)
-
-    def scan(self, **_):
-        return {"Items": [dict(v) for v in self.items.values()]}
-
-    def update_item(self, Key, UpdateExpression, ExpressionAttributeNames=None, ExpressionAttributeValues=None, **_):
-        item = self.items.setdefault(Key[self.key], dict(Key))
-        if UpdateExpression.startswith("REMOVE"):
-            item.pop(UpdateExpression.split()[1], None)
-            return {}
-        for part in UpdateExpression[4:].split(","):
-            name, val = (s.strip() for s in part.split("="))
-            item[(ExpressionAttributeNames or {}).get(name, name)] = ExpressionAttributeValues[val]
-        return {}
-
-
-def setup(monkeypatch):
-    tables = {
-        "FORKLIFTS_TABLE": FakeTable("forklift_id", [{"forklift_id": "fl-01", "node": "dock_A"}]),
-        "TASKS_TABLE": FakeTable("task_id", []),
-        "PALLETS_TABLE": FakeTable("pallet_id", [{"pallet_id": "pallet_3", "node": "slot_A3"}]),
-    }
-    sent = []
-    for mod in (tree_runner, route_planner):
-        monkeypatch.setattr(mod, "table", lambda name: tables[name])
-    monkeypatch.setattr(tree_runner, "publish", lambda topic, payload: sent.append((topic, payload)))
-    return tables, sent
-
-
-def arrive(tables, node):
-    tables["FORKLIFTS_TABLE"].items["fl-01"]["node"] = node
+def drive_to_end(tables, fid, sent):
+    """Pretend the forklift drives its windowed route: report node_reached until the route is done."""
+    for _ in range(20):
+        route = tables["FORKLIFTS_TABLE"].items[fid].get("route")
+        if not route or len(route) == 1:
+            break
+        nxt = route[1]
+        tables["FORKLIFTS_TABLE"].items[fid]["node"] = nxt
+        traffic.on_node_reached(fid, nxt)
+    node = tables["FORKLIFTS_TABLE"].items[fid]["node"]
+    traffic.on_done(fid, node)
+    return node
 
 
 def test_full_move(monkeypatch):
-    tables, sent = setup(monkeypatch)
+    tables, locks, sent = install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_A"}],
+                                  [{"pallet_id": "pallet_3", "node": "slot_A3"}])
     tree = with_status({"type": "Sequence", "children": [
         {"type": "GoTo", "node": "slot_A3"}, {"type": "Pick", "pallet": "pallet_3"},
         {"type": "GoTo", "node": "dock_B"}, {"type": "Drop", "slot": "dock_B"}]})
@@ -60,23 +34,26 @@ def test_full_move(monkeypatch):
     tables["TASKS_TABLE"].put_item(task)
 
     tree_runner.start(task, "fl-01", tree)
-    paths = [p for t, p in sent if t == "fleet/fl-01/path"]
-    assert paths[-1]["nodes"][-1]["id"] == "slot_A3"
+    first = paths(sent, "fl-01")[0]
+    assert first["partial"] is True and len(first["nodes"]) == 3  # current + 2 reserved ahead
 
-    arrive(tables, "slot_A3"); tree_runner.on_event("fl-01", "t1", "done")   # reached pallet
-    assert [p for t, p in sent if t == "fleet/fl-01/path"][-1]["action"] == "pick"
-    tree_runner.on_event("fl-01", "t1", "done")                                # picked
+    assert drive_to_end(tables, "fl-01", sent) == "slot_A3"
+    tree_runner.on_event("fl-01", "t1", "done")                       # reached pallet
+    assert paths(sent, "fl-01")[-1]["action"] == "pick"
+    tree_runner.on_event("fl-01", "t1", "done")                       # picked
     assert tables["PALLETS_TABLE"].items["pallet_3"]["node"] == "on:fl-01"
-    arrive(tables, "dock_B"); tree_runner.on_event("fl-01", "t1", "done")     # at dock
-    tree_runner.on_event("fl-01", "t1", "done")                                # dropped
+    assert drive_to_end(tables, "fl-01", sent) == "dock_B"
+    tree_runner.on_event("fl-01", "t1", "done")                       # at dock
+    tree_runner.on_event("fl-01", "t1", "done")                       # dropped
 
     assert tables["PALLETS_TABLE"].items["pallet_3"]["node"] == "dock_B"
     assert tables["TASKS_TABLE"].items["t1"]["status"] == "done"
     assert sent[-1][0] == "tasks/t1/status" and sent[-1][1]["state"] == "done"
+    assert locks.held() == {"dock_B": "fl-01"}  # only the parking spot stays reserved
 
 
 def test_fault_fails_task(monkeypatch):
-    tables, sent = setup(monkeypatch)
+    tables, _, sent = install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_A"}])
     tree = with_status({"type": "Sequence", "children": [{"type": "GoTo", "node": "j3"}]})
     task = {"task_id": "t2", "status": "running", "tree": tree}
     tables["TASKS_TABLE"].put_item(task)
@@ -87,7 +64,7 @@ def test_fault_fails_task(monkeypatch):
 
 
 def test_retry_then_fallback(monkeypatch):
-    tables, _ = setup(monkeypatch)
+    tables, _, _ = install(monkeypatch, [{"forklift_id": "fl-01", "node": "dock_A"}])
     tree = with_status({"type": "Fallback", "children": [
         {"type": "Retry", "n": 2, "child": {"type": "GoTo", "node": "j3"}},
         {"type": "GoTo", "node": "j2"}]})

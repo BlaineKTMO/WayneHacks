@@ -124,7 +124,7 @@ export function ConsoleView({ fleet, email, signOut }: { fleet: Fleet; email?: s
             <h2>Live floor</h2>
             <div className="legend">
               <span><i className="lg-dock" />Dock</span><span><i className="lg-slot" />Racking</span>
-              <span><i className="lg-pallet" />Pallet</span><span><i className="lg-route" />Route</span>
+              <span><i className="lg-pallet" />Pallet</span><span><i className="lg-route" />Route</span><span><i className="lg-res" />Reserved</span>
             </div>
             <div className="spacer" />
             {selected
@@ -136,7 +136,7 @@ export function ConsoleView({ fleet, email, signOut }: { fleet: Fleet; email?: s
           </div>
           <div className="map-wrap">
             {fleet.graph
-              ? <WarehouseMap graph={fleet.graph} forklifts={fleet.forklifts} trails={fleet.trails} pallets={fleet.pallets}
+              ? <WarehouseMap graph={fleet.graph} forklifts={fleet.forklifts} trails={fleet.trails} pallets={fleet.pallets} locks={fleet.locks}
                   selected={selected} onNodeClick={(n) => selected && fleet.goto(selected, n)} onUnitClick={setSelected} />
               : <div className="empty">Loading floor plan…</div>}
           </div>

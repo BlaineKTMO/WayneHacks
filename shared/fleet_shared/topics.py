@@ -19,6 +19,7 @@ def stop(fid: str) -> str:       return f"fleet/{_check(fid)}/stop"        # edg
 def goto(fid: str) -> str:       return f"fleet/{_check(fid)}/goto"        # dashboard -> cloud (Ring 2 "click a node")
 
 DETECTIONS = "warehouse/detections"
+LOCKS = "warehouse/locks"          # cloud -> dashboard, on change
 TASKS_NEW = "tasks/new"
 
 
