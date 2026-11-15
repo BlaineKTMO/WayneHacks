@@ -57,6 +57,11 @@ int main(void) {
     fwog_link_rx_init(&s_link_rx);
     fwog_buttons_init();
 
+    /* The OG runs on its internal battery and charges it from USB. Same charger setup
+       the stock firmware and the BSP's bench app do (enable charging, ADC on, charger
+       watchdog off). Never touches ship mode. */
+    (void)bq25896_start_charging();
+
     /* Bounded: st7789 init can stall forever if clk_peri is wrong, and this CPU
        has no watchdog to recover from a spin. */
     st7789_init_begin();

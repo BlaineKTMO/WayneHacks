@@ -50,6 +50,18 @@ Wire by **header pin number** (the 1–20 printed on the OG). The GPIO column is
 
 These six pins are already outputs in the board's default setup, so the firmware never changes a pin's direction. That BSP path has never been tested on hardware, and we avoid it on purpose.
 
+### Power
+
+| What | Powered by |
+|---|---|
+| **Free-WiLi OG** | Its own internal battery, charged over the **same USB cable** that carries the commands from the laptop |
+| **L298N logic** | Each L298N's onboard 5 V regulator (jumper on), from the motor battery |
+| **Motors** | Motor battery → every L298N's `12V` terminal |
+
+The **only** electrical link between the OG and the motor side is **ground**: header pin 19 or 20 → every L298N's GND → motor battery −. Never connect the motor battery, an L298N's `12V` or its `5V` pin to any OG pin. Header pins 2 and 6 are OG *outputs*, and pin 6 only feeds pin 4.
+
+The USB cable has to stay plugged in while driving (it carries the commands), so mount the OG on the forklift and route a long, light cable from above so it doesn't drag or lie across a corner tag.
+
 ### Power-on order
 
 **Turn the motor battery on only after the screen shows `IDLE`.** The firmware holds every motor braked from boot, but during the first moment after power-up nothing is in control of the pins yet.
