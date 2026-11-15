@@ -47,6 +47,7 @@ Do these in order. Don't move on until the step's check passes.
 | **2. Lens calibration** | `uv run python -m fleet_edge.step2_calibrate` | Prints `reprojection error` under 1.0. Creates `edge/calibration/camera.npz`. |
 | **3. Tags** | `uv run python -m fleet_edge.step3_tags` | Says `map OK`. Put the forklift tag on a ruler-measured spot: screen matches within 1 cm. Arrow points the way the forklift faces (if not, fix `TAG_HEADING_OFFSET`). |
 | **4. Motors** | `uv run python -m fleet_edge.step4_motors` | w/a/s/d drives the forklift. Find the lowest speed that moves it, put it in `MIN_SPEED`. Unplug USB while driving → stops within 0.5 s. |
+| **4b. Drive with the camera** | `uv run python -m fleet_edge.drive_cam` | Live webcam view with tags, the forklift's outline and heading, the route, the pole and the camera border. Hold w/a/s/d to drive (stops when you let go); stops by itself if tag 13 is lost. `--radio` uses the radio base, `--video out.mp4` records. |
 | **5. Serial debug** | `uv run python -m fleet_edge.step5_serial_monitor` | Only when step 4 doesn't work: shows exactly what the Free-WiLi sends and receives. |
 | **6. Ring 1** | `uv run python -m fleet_edge.step6_ring1` | SPACE to go. 3 clean laps. Cover the tag → stops. **Record a backup video.** |
 
