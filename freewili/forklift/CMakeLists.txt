@@ -60,8 +60,8 @@ fwog_display_app(forklift_display
     VERSION 001
     DESCRIPTION "Forklift: services breakout I/O for main, shows ID and state")
 
-add_executable(forklift_main main/main.c main/motor_proto.c)
-target_link_libraries(forklift_main fwog_main_bsp hardware_pwm hardware_uart)
+add_executable(forklift_main main/main.c main/motor_proto.c main/byte_ring.c main/wifi_link.c)
+target_link_libraries(forklift_main fwog_main_bsp hardware_pwm hardware_uart hardware_i2c pico_i2c_slave)
 # A laptop that holds the port open but stops reading must not stall the motor
 # loop for the SDK's default 500 ms.
 target_compile_definitions(forklift_main PRIVATE PICO_STDIO_USB_STDOUT_TIMEOUT_US=20000)

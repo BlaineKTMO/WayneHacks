@@ -22,6 +22,10 @@
  * the RP2040's reset pull-down, i.e. low = brake.
  *
  * Header pin 4 (V PINS IN) must be powered (jumper hdr 6 -> hdr 4) or no pin moves.
+ *
+ * Commands arrive over USB serial OR over WiFi: a Bottlenose (ESP32-C6) on the Qwiic /
+ * breakout I2C pins (hdr 10 SDA, hdr 8 SCL) relays the same text lines (wifi_link.h).
+ * Both feed the same parser and the same 500 ms watchdog; telemetry goes to both.
  */
 #include "fwog_main.h"
 #include "hardware/clocks.h"
@@ -32,6 +36,9 @@
 #include <stdio.h>
 
 #include "motor_proto.h"
+#include "wifi_link.h"
+
+#include <string.h>
 
 /* Kicks the BSP's 8.3 s board watchdog from the loop below. The 500 ms motor
  * watchdog (CMD_TIMEOUT_MS) is separate and much stricter. */
@@ -57,6 +64,9 @@ FWOG_WATCHDOG_DEFAULT();
 /* main -> display, payload [MSG_FORKLIFT_STATUS, fl_state_t]. 0x01-0x1F belong to the
  * bootloader and 0x20-0x22 to the breakout I/O protocol (bsp/common/link/). */
 #define MSG_FORKLIFT_STATUS 0x40u
+/* main -> display, payload [MSG_FORKLIFT_IP, ascii...]: the WiFi module's IP address. */
+#define MSG_FORKLIFT_IP 0x41u
+#define IP_TEXT_MAX 20u
 
 /* The OG cannot measure the motor battery (the breakout lines are digital). */
 #define BATTERY_V_UNKNOWN 0.0f
@@ -66,6 +76,7 @@ static bool s_io_ready;        /* IO_CONFIG known-closed and all six pins claime
 static bool s_wheels_moving;
 static bool s_fork_moving;
 static absolute_time_t s_fork_until;
+static char s_ip[IP_TEXT_MAX + 1];   /* last "I,<ip>" from the WiFi module, "" if none */
 
 static void pwm_pin_init(unsigned gpio) {
     const unsigned slice = pwm_gpio_to_slice_num(gpio);
@@ -143,6 +154,16 @@ static void send_status_to_display(fl_state_t s) {
     (void)fwog_link_uart_send_frame(payload, sizeof payload);
 }
 
+static void send_ip_to_display(void) {
+    /* Same never-block rule as the status frame (<= 23 bytes fits the 32-byte FIFO). */
+    if (!s_ip[0] || !(uart_get_hw(uart0)->fr & UART_UARTFR_TXFE_BITS)) return;
+    uint8_t payload[1 + IP_TEXT_MAX];
+    const size_t n = strlen(s_ip);
+    payload[0] = MSG_FORKLIFT_IP;
+    memcpy(payload + 1, s_ip, n);
+    (void)fwog_link_uart_send_frame(payload, 1 + n);
+}
+
 static void set_state(fl_state_t s) {
     if (s == s_state) return;
     s_state = s;
@@ -158,6 +179,7 @@ static void send_telemetry(void) {
     const size_t n = proto_format_telemetry(buf, sizeof buf, s_state, BATTERY_V_UNKNOWN);
     fwrite(buf, 1, n, stdout);
     fflush(stdout);
+    wifi_link_send(buf, n);
 }
 
 /* Close the FPGA's IO_CONFIG window, then claim the SPI-group pins and the fork's
@@ -183,6 +205,12 @@ static void try_io_ready(void) {
 }
 
 static void handle_line(const char *line, absolute_time_t *last_cmd) {
+    if (line[0] == 'I' && line[1] == ',') {    /* WiFi module's IP: show it, not a command */
+        strncpy(s_ip, line + 2, IP_TEXT_MAX);
+        s_ip[IP_TEXT_MAX] = '\0';
+        send_ip_to_display();
+        return;
+    }
     const cmd_t c = proto_parse_line(line);
     if (c.kind == CMD_NONE) return;            /* garbage never feeds the watchdog */
     *last_cmd = get_absolute_time();
@@ -219,6 +247,9 @@ int main(void) {
     pwm_pin_init(PIN_LEFT_A);
     pwm_pin_init(PIN_LEFT_B);
 
+    /* Breakout I2C has no direction bit and isn't in the FPGA SPI group: safe now. */
+    wifi_link_init();
+
     /* Brings the display CPU up (and reflashes it if its image changed). Performs
        board_release_display() itself -- do not call it separately. */
     const fwog_display_result_t d = fwog_display_update_run();
@@ -226,8 +257,9 @@ int main(void) {
 
     try_io_ready();
 
-    line_rx_t rx;
+    line_rx_t rx, wifi_rx;     /* separate buffers: USB and WiFi bytes never interleave */
     line_rx_init(&rx);
+    line_rx_init(&wifi_rx);
     absolute_time_t last_cmd = get_absolute_time();
     absolute_time_t next_telemetry = make_timeout_time_ms(TELEMETRY_MS);
     absolute_time_t next_retry = make_timeout_time_ms(CONFIG_RETRY_MS);
@@ -238,6 +270,10 @@ int main(void) {
         int ch;
         while ((ch = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
             if (line_rx_feed(&rx, (char)ch)) handle_line(rx.buf, &last_cmd);
+        }
+        char wc;
+        while (wifi_link_getc(&wc)) {
+            if (line_rx_feed(&wifi_rx, wc)) handle_line(wifi_rx.buf, &last_cmd);
         }
 
         if (s_fork_moving && time_reached(s_fork_until)) {
@@ -261,6 +297,7 @@ int main(void) {
             next_telemetry = make_timeout_time_ms(TELEMETRY_MS);
             send_telemetry();
             send_status_to_display(s_state);   /* also repaints a display that rebooted */
+            send_ip_to_display();
         }
 
         tight_loop_contents();

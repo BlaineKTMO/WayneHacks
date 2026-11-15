@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "../main/motor_proto.h"
+#include "../main/byte_ring.h"
 
 static int failures;
 #define CHECK(cond) do { if (!(cond)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -96,7 +97,30 @@ static void test_line_rx(void) {
     CHECK(n == 1 && strcmp(lines[0], "W,5,5") == 0);
 }
 
+static void test_byte_ring(void) {
+    byte_ring_t r;
+    byte_ring_init(&r);
+    uint8_t b = 7;
+    CHECK(!byte_ring_pop(&r, &b) && byte_ring_count(&r) == 0);
+    CHECK(byte_ring_push(&r, 'W') && byte_ring_push(&r, ',') && byte_ring_count(&r) == 2);
+    CHECK(byte_ring_pop(&r, &b) && b == 'W' && byte_ring_pop(&r, &b) && b == ',');
+    /* fills to SIZE-1, then refuses; wraps around correctly */
+    int pushed = 0;
+    while (byte_ring_push(&r, (uint8_t)pushed)) pushed++;
+    CHECK(pushed == (int)BYTE_RING_SIZE - 1 && byte_ring_free(&r) == 0);
+    int ok = 1;
+    for (int i = 0; i < pushed; i++) ok &= byte_ring_pop(&r, &b) && b == (uint8_t)i;
+    CHECK(ok && byte_ring_count(&r) == 0);
+    /* all-or-nothing: a telemetry line is never cut in half */
+    const uint8_t line[] = "T,IDLE,0.00\n";
+    for (int i = 0; i < (int)BYTE_RING_SIZE - 5; i++) (void)byte_ring_push(&r, 'x');
+    CHECK(!byte_ring_push_all(&r, line, sizeof line - 1) && byte_ring_free(&r) == 4);
+    byte_ring_init(&r);
+    CHECK(byte_ring_push_all(&r, line, sizeof line - 1) && byte_ring_count(&r) == sizeof line - 1);
+}
+
 int main(void) {
+    test_byte_ring();
     test_parse();
     test_drive_channel();
     test_fork_channel();

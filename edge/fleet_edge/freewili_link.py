@@ -76,7 +76,9 @@ class SerialLink:
         import serial  # pyserial
         if port == "auto":
             port = find_port()
-        self.ser = serial.Serial(port, baud, timeout=0)
+        # "socket://forklift-01.local:5000" = over WiFi through the Bottlenose relay
+        # (freewili/bottlenose/); anything else is a USB serial device. Same lines either way.
+        self.ser = serial.serial_for_url(port, baudrate=baud, timeout=0)
         self._buf = b""
         self.last_telemetry: FreeWiliTelemetry | None = None
 

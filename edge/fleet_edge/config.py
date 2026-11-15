@@ -3,6 +3,8 @@
 Units: metres, radians, seconds. World frame: origin at the bottom-left corner tag (CORNER_TAGS), x to the right, y up.
 """
 
+import os
+
 # ---------------------------------------------------------------- camera
 CAMERA_INDEX = 2              # eMeet C950 (/dev/video2). 0 is the laptop's built-in camera.
 CAMERA_WIDTH = 1280
@@ -64,7 +66,9 @@ TAG_OFFSET_LEFT_M = -0.072
 # ---------------------------------------------------------------- Free-WiLi serial link
 # "auto" finds the Free-WiLi OG main CPU by its USB name. Or set a path by hand
 # (macOS: `ls /dev/tty.usb*`, Linux: `ls /dev/ttyACM*`); the OG shows TWO ports.
-SERIAL_PORT = "auto"
+# "auto" = find the OG on USB. Over WiFi: set FORKLIFT_PORT=socket://forklift-01.local:5000
+# (or the IP shown on the OG's screen) instead of editing this.
+SERIAL_PORT = os.environ.get("FORKLIFT_PORT", "auto")
 SERIAL_BAUD = 115200
 COMMAND_RATE_HZ = 20          # how often we send W lines
 LOST_TAG_STOP_S = 0.3         # tag not seen for this long -> send S (stop). Must stop within 0.5 s.

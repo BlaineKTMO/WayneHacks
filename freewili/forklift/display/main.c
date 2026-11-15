@@ -11,6 +11,7 @@
 #include "pico/stdlib.h"
 
 #include <stdio.h>
+#include <string.h>
 
 FWOG_POWER_DEFAULT();
 
@@ -18,6 +19,8 @@ FWOG_POWER_DEFAULT();
  * everywhere else (MQTT, DynamoDB, dashboard) stays "fl-01". */
 #define FORKLIFT_ID "FL-01"
 #define MSG_FORKLIFT_STATUS 0x40u   /* keep in step with forklift/main/main.c */
+#define MSG_FORKLIFT_IP 0x41u       /* [0x41, ascii IP]: the WiFi module's address */
+#define IP_MAX 20u
 #define MAIN_SILENT_MS 3000u        /* main sends status every second */
 
 /* Same order as fl_state_t in main/motor_proto.h. */
@@ -43,6 +46,8 @@ static uint16_t state_colour(int s) {
 #define TEXT_X 16u
 #define ID_Y 70u
 #define STATE_Y 140u
+#define IP_Y 200u
+#define IP_SCALE 2u                 /* 12 x 16 px glyphs: "192.168.100.100" fits */
 
 static void draw_state(const char *text, uint16_t colour) {
     if (!s_lcd_ready) return;
@@ -77,6 +82,7 @@ int main(void) {
     }
 
     int shown = -1;
+    char ip_shown[IP_MAX + 1] = "";
     absolute_time_t last_status = get_absolute_time();
     bool silent_shown = false;
 
@@ -88,6 +94,18 @@ int main(void) {
             size_t len = 0u;
             if (!fwog_link_rx_byte(&s_link_rx, b, &len)) continue;
             if (fwog_ioexp_link_handle(s_link_rx.buf, len)) continue;   /* breakout I/O, acked */
+            if (len >= 2u && s_link_rx.buf[0] == MSG_FORKLIFT_IP && s_lcd_ready) {
+                char ip[IP_MAX + 1];
+                size_t n = len - 1u > IP_MAX ? IP_MAX : len - 1u;
+                memcpy(ip, s_link_rx.buf + 1, n);
+                ip[n] = '\0';
+                if (strcmp(ip, ip_shown) != 0) {
+                    strcpy(ip_shown, ip);
+                    lcd_text_draw_padded(TEXT_X, IP_Y, ip, IP_MAX, IP_SCALE,
+                                         st7789_rgb565(0, 200, 255), 0x0000u);
+                }
+                continue;
+            }
             if (len >= 2u && s_link_rx.buf[0] == MSG_FORKLIFT_STATUS) {
                 const int s = s_link_rx.buf[1];
                 last_status = get_absolute_time();

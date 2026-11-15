@@ -1,6 +1,6 @@
 # Free-WiLi OG forklift controller
 
-The **Free-WiLi OG** drives the forklift: **4-wheel skid-steer drive plus a fork motor**, through **three L298N** drivers. The edge laptop sends commands over USB, and the OG turns them into PWM on its breakout header.
+The **Free-WiLi OG** drives the forklift: **4-wheel skid-steer drive plus a fork motor**, through **three L298N** drivers. The edge laptop sends commands over USB, or over WiFi through a [Bottlenose](bottlenose/README.md) on the Qwiic pins, and the OG turns them into PWM on its breakout header.
 
 ```
 laptop ──USB──► OG main CPU ──6 header pins──► L298N 1 (front axle) ─► FL, FR motors
@@ -34,6 +34,7 @@ Wire by **header pin number** (the 1–20 printed on the OG). The GPIO column is
 | **1** | IN1 on **driver 3** | Fork | 13 |
 | **3** | IN2 on **driver 3** | Fork | 27 |
 | **19 or 20** | GND on **all three drivers** + motor battery − | Common ground | |
+| **10**, **8** | Bottlenose SDA, SCL (Qwiic) | WiFi, optional ([bottlenose/](bottlenose/README.md)) | 16, 17 |
 
 | Driver | OUT1/OUT2 (channel A) | OUT3/OUT4 (channel B) |
 |---|---|---|
