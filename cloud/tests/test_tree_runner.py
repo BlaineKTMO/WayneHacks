@@ -6,7 +6,7 @@ os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-2")
 
 import traffic  # noqa: E402
 import tree_runner  # noqa: E402
-from fakes import install, paths  # noqa: E402
+from fakes import install, last_status, paths  # noqa: E402
 from fleet_shared.behavior_tree import with_status  # noqa: E402
 
 
@@ -48,7 +48,10 @@ def test_full_move(monkeypatch):
 
     assert tables["PALLETS_TABLE"].items["pallet_3"]["node"] == "dock_B"
     assert tables["TASKS_TABLE"].items["t1"]["status"] == "done"
-    assert sent[-1][0] == "tasks/t1/status" and sent[-1][1]["state"] == "done"
+    assert last_status(sent, "t1")["state"] == "done"
+    assert tables["EPISODES_TABLE"].items["t1"]["success"] is True          # graded episode recorded
+    assert any(k.endswith("/t1.json") for k in tables["_s3"])
+    assert [p for t, p in sent if t == "tasks/t1/outcome"][-1]["success"] is True
     assert locks.held() == {"dock_B": "fl-01"}  # only the parking spot stays reserved
 
 
@@ -60,7 +63,8 @@ def test_fault_fails_task(monkeypatch):
     tree_runner.start(task, "fl-01", tree)
     tree_runner.on_event("fl-01", "t2", "fault")
     assert tables["TASKS_TABLE"].items["t2"]["status"] == "failed"
-    assert "fault" in sent[-1][1]["error"]
+    assert "fault" in last_status(sent, "t2")["error"]
+    assert tables["EPISODES_TABLE"].items["t2"]["success"] is False
 
 
 def test_retry_then_fallback(monkeypatch):

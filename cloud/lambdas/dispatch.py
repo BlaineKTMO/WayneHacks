@@ -24,6 +24,7 @@ from fleet_shared.behavior_tree import PRIMITIVES_DOC, TREE_TOOL_SCHEMA, first_t
 from fleet_shared.graph import Graph
 from fleet_shared import rule_planner
 from fleet_shared.messages import TaskNew, TaskStatus, now_ms
+from fleet_shared.sim import score, simulate
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -60,10 +61,12 @@ TOOLS = {"tools": [
 ], "toolChoice": {"any": {}}}
 
 
-def load_planner() -> dict:
+def load_planners() -> tuple[dict, list[dict]]:
+    """(prod planner, shadow planners) from FleetPlanners; DEFAULT_PLANNER if none is prod."""
     items = from_ddb(table("PLANNERS_TABLE").scan().get("Items", []))
     prod = [p for p in items if p.get("stage") == "prod"]
-    return {**DEFAULT_PLANNER, **prod[0]} if prod else DEFAULT_PLANNER
+    shadows = [{**DEFAULT_PLANNER, **p} for p in items if p.get("stage") == "shadow"]
+    return ({**DEFAULT_PLANNER, **prod[0]} if prod else DEFAULT_PLANNER), shadows
 
 
 def snapshot() -> tuple[dict[str, str], list[dict]]:
@@ -106,6 +109,66 @@ def pick_forklift(forklifts: list[dict], target: str | None) -> dict | None:
     return min(pool, key=cost)
 
 
+class PlanError(Exception):
+    pass
+
+
+def make_plan(planner: dict, text: str, pallets: dict, forklifts: list[dict]) -> tuple[dict, dict | None]:
+    """Ask one planner for a valid tree (one repair round). Returns (tree, chosen forklift).
+    Raises PlanError for a rejected/invalid plan; other exceptions mean the LLM is unavailable."""
+    messages: list = []
+    errors = ["no attempt"]
+    tree, fl = None, None
+    for _ in range(2):
+        use = ask_llm(planner, text, pallets, forklifts, messages)
+        if use["name"] == "reject":
+            raise PlanError(f"Planner declined: {use['input'].get('reason', 'no reason')}")
+        tree = use["input"].get("tree")
+        target = first_target(tree) if isinstance(tree, dict) and "type" in tree else None
+        fl = pick_forklift(forklifts, target)
+        errors = validate(tree, GRAPH, pallets, start_node=fl["node"] if fl else None,
+                          forklift_id=fl["forklift_id"] if fl else "fl-??")
+        if not errors:
+            return tree, fl
+        messages.append({"role": "user", "content": [{"toolResult": {
+            "toolUseId": use["toolUseId"], "status": "error",
+            "content": [{"text": "Invalid tree:\n- " + "\n- ".join(errors) + "\nFix it and call submit_tree again."}]}}]})
+    raise PlanError("Invalid plan: " + "; ".join(errors[:3]))
+
+
+def sim_snapshot(fl: dict, pallets: dict, forklifts: list[dict]) -> dict:
+    return {"forklift": fl["forklift_id"], "start": fl["node"], "pallets": pallets,
+            "occupied": [f["node"] for f in forklifts if f["forklift_id"] != fl["forklift_id"] and f.get("node")]}
+
+
+def run_shadows(task: dict, shadows: list[dict], text: str, pallets: dict, forklifts: list[dict],
+                prod_cost: float, snap: dict) -> list[dict]:
+    """Every shadow planner plans the same order from the same snapshot. Simulated, never executed."""
+    results = []
+    for sp in shadows:
+        t0 = time.time()
+        try:
+            tree, _ = make_plan(sp, text, pallets, forklifts)
+            out = simulate(tree, snap, GRAPH)
+            r = {"planner_version": sp["version"], "tree": tree, "sim_cost": out.cost, "valid": True}
+        except PlanError as e:
+            r = {"planner_version": sp["version"], "tree": None, "sim_cost": score(False, 0, 0), "valid": False,
+                 "error": str(e)}
+        except Exception as e:  # LLM unavailable: skip this candidate, don't count it
+            log.warning("shadow %s unavailable: %s", sp["version"], e)
+            continue
+        r["latency_ms"] = int((time.time() - t0) * 1000)
+        r["prod_sim_cost"] = prod_cost
+        r["win"] = r["valid"] and r["sim_cost"] <= prod_cost
+        results.append(r)
+        publish(topics.task_shadow(task["task_id"]), r)
+        table("PLANNERS_TABLE").update_item(
+            Key={"version": sp["version"]},
+            UpdateExpression="ADD shadow_runs :one, shadow_wins :w, shadow_cost_sum :c",
+            ExpressionAttributeValues=to_ddb({":one": 1, ":w": 1 if r["win"] else 0, ":c": r["sim_cost"]}))
+    return results
+
+
 def status(task_id: str, **kw) -> None:
     publish(topics.task_status(task_id), TaskStatus(**kw).to_dict())
 
@@ -113,7 +176,7 @@ def status(task_id: str, **kw) -> None:
 def handler(msg, _ctx):
     order = TaskNew.from_dict(msg)
     task_id = f"t-{uuid.uuid4().hex[:8]}"
-    planner = load_planner()
+    planner, shadows = load_planners()
     task = {"task_id": task_id, "text": order.text, "status": "planning",
             "planner_version": planner["version"], "created_at": now_ms()}
     table("TASKS_TABLE").put_item(Item=to_ddb(task))
@@ -128,28 +191,15 @@ def handler(msg, _ctx):
         log.warning("task %s failed: %s", task_id, error)
 
     pallets, forklifts = snapshot()
-    messages: list = []
     t0 = time.time()
+    llm_ok = True
     try:
-        tree, errors = None, ["no attempt"]
-        for attempt in range(2):
-            use = ask_llm(planner, order.text, pallets, forklifts, messages)
-            if use["name"] == "reject":
-                return fail(f"Planner declined: {use['input'].get('reason', 'no reason')}")
-            tree = use["input"].get("tree")
-            target = first_target(tree) if isinstance(tree, dict) and "type" in tree else None
-            fl = pick_forklift(forklifts, target)
-            errors = validate(tree, GRAPH, pallets, start_node=fl["node"] if fl else None,
-                              forklift_id=fl["forklift_id"] if fl else "fl-??")
-            if not errors:
-                break
-            messages.append({"role": "user", "content": [{"toolResult": {
-                "toolUseId": use["toolUseId"], "status": "error",
-                "content": [{"text": "Invalid tree:\n- " + "\n- ".join(errors) + "\nFix it and call submit_tree again."}]}}]})
-        if errors:
-            return fail("Invalid plan: " + "; ".join(errors[:3]))
+        tree, fl = make_plan(planner, order.text, pallets, forklifts)
+    except PlanError as e:
+        return fail(str(e))
     except Exception as e:  # Bedrock outage, throttling, not enabled: fall back to rules
         log.exception("LLM planner error; trying rule-based fallback")
+        llm_ok = False
         tree = rule_planner.plan(order.text, GRAPH, pallets)
         if tree is None:
             return fail(f"AI planner unavailable ({type(e).__name__}) and the backup planner didn't understand the order")
@@ -164,12 +214,23 @@ def handler(msg, _ctx):
     if fl is None:
         return fail("No free forklift available")
 
-    tree = with_status(tree)
-    task.update({"status": "running", "assigned_to": fl["forklift_id"], "tree": tree,
-                 "llm_latency_ms": int((time.time() - t0) * 1000)})
+    latency_ms = int((time.time() - t0) * 1000)
+    snap = sim_snapshot(fl, pallets, forklifts)
+    predicted = simulate(tree, snap, GRAPH)
+    run_tree = with_status(tree)
+    task.update({"status": "running", "assigned_to": fl["forklift_id"], "tree": run_tree,
+                 "llm_latency_ms": latency_ms, "snapshot": snap, "sim": predicted.to_dict(),
+                 "started_at": now_ms()})
     table("TASKS_TABLE").put_item(Item=to_ddb(task))
     table("FORKLIFTS_TABLE").update_item(Key={"forklift_id": fl["forklift_id"]},
                                          UpdateExpression="SET current_task = :t",
                                          ExpressionAttributeValues={":t": task_id})
-    tree_runner.start(task, fl["forklift_id"], tree)
+    tree_runner.start(task, fl["forklift_id"], run_tree)
+
+    # Shadow candidates plan the same order while the forklift is already driving.
+    if llm_ok and shadows:
+        results = run_shadows(task, shadows, order.text, pallets, forklifts, predicted.cost, snap)
+        if results:
+            table("TASKS_TABLE").update_item(Key={"task_id": task_id}, UpdateExpression="SET shadow = :s",
+                                             ExpressionAttributeValues={":s": to_ddb(results)})
     return {"task_id": task_id}

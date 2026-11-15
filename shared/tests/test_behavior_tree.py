@@ -67,3 +67,16 @@ def test_rule_planner():
     assert validate(swap, G, PALLETS, start_node="dock_A") == []
     assert rule_planner.plan("make me a sandwich", G, PALLETS) is None
     assert rule_planner.plan("move pallet 9 to dock B", G, PALLETS) is None
+
+
+def test_sim_scores_shorter_plans_lower():
+    from fleet_shared.sim import simulate
+    snap = {"forklift": "fl-01", "start": "dock_A", "pallets": PALLETS}
+    good = simulate(MOVE_3_TO_B, snap, G)
+    # Same job with a pointless detour to slot_A4 first
+    detour = seq(goto("slot_A4"), goto("slot_A3"), pick("pallet_3"), goto("dock_B"), drop("dock_B"))
+    bad = simulate(detour, snap, G)
+    assert good.success and bad.success and good.cost < bad.cost
+    assert simulate(MOVE_3_TO_B, snap, G).cost == good.cost              # deterministic
+    assert not simulate(seq(pick("pallet_3")), snap, G).success           # invalid -> failure cost
+    assert simulate(seq(pick("pallet_3")), snap, G).cost >= 100

@@ -18,10 +18,15 @@ from __future__ import annotations
 
 import logging
 
-from common import from_ddb, publish, table, to_ddb
+import json
+import os
+import time
+
+from common import from_ddb, publish, s3, table, to_ddb
 from fleet_shared import topics
 from fleet_shared.graph import Graph
 from fleet_shared.messages import Path, TaskStatus, now_ms
+from fleet_shared.sim import score
 import traffic
 
 log = logging.getLogger()
@@ -141,7 +146,45 @@ def _save_and_report(task: dict, tree: dict, fid: str) -> None:
     publish(topics.task_status(task_id), TaskStatus(
         state=state, tree=tree, assigned_to=fid, planner_version=task.get("planner_version"),
         text=task.get("text"), error=err).to_dict())
+    if state != "running":
+        record_episode(task, tree, fid, state == "done")
     log.info("task %s -> %s", task_id, state)
+
+
+def record_episode(task: dict, tree: dict, fid: str, success: bool) -> dict:
+    """Grade the finished task by its real outcome and store it as an episode (S3 + FleetEpisodes).
+
+    Real duration comes from timestamps. Distance and wait are estimates for now: distance from
+    the planned route, wait = real time beyond what the simulator predicted. The edge
+    episode-logger will replace these with measured values.
+    """
+    now = now_ms()
+    started = int(task.get("started_at") or task.get("created_at") or now)
+    duration_s = max(0.0, (now - started) / 1000)
+    pred = task.get("sim") or {}
+    distance = float(pred.get("distance_m", 0.0))
+    wait_s = max(0.0, duration_s - float(pred.get("duration_s", duration_s)))
+    latency_s = int(task.get("llm_latency_ms", 0)) / 1000
+    outcome = {"success": success, "distance_m": round(distance, 3), "wait_s": round(wait_s, 2),
+               "duration_s": round(duration_s, 2), "replans": 0, "stops": 0,
+               "cost": score(success, distance, wait_s, llm_latency_s=latency_s)}
+    episode = {"task_id": task["task_id"], "text": task.get("text"), "planner_version": task.get("planner_version"),
+               "forklift": fid, "snapshot": task.get("snapshot"), "tree": tree, "outcome": outcome,
+               "sim": pred, "sim_gap_s": round(duration_s - float(pred.get("duration_s", 0)), 2),
+               "shadow": task.get("shadow"), "created_at": now}
+    day = time.strftime("%Y-%m-%d", time.gmtime(now / 1000))
+    key = f"episodes/{day}/{task['task_id']}.json"
+    try:
+        s3().put_object(Bucket=os.environ["DATA_BUCKET"], Key=key, Body=json.dumps(episode, default=str).encode(),
+                        ContentType="application/json")
+        table("EPISODES_TABLE").put_item(Item=to_ddb({
+            "task_id": task["task_id"], "planner_version": task.get("planner_version") or "-",
+            "snapshot_uri": f"s3://{os.environ['DATA_BUCKET']}/{key}", "cost": outcome["cost"],
+            "sim_cost": pred.get("cost"), "success": success, "created_at": now}))
+    except Exception:
+        log.exception("episode write failed for %s", task["task_id"])
+    publish(topics.task_outcome(task["task_id"]), outcome)
+    return outcome
 
 
 def _first_error(n: dict) -> str | None:

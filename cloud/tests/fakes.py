@@ -67,13 +67,27 @@ def install(monkeypatch, forklifts, pallets=()):
         "FORKLIFTS_TABLE": FakeTable("forklift_id", forklifts),
         "TASKS_TABLE": FakeTable("task_id"),
         "PALLETS_TABLE": FakeTable("pallet_id", pallets),
+        "EPISODES_TABLE": FakeTable("task_id"),
     }
     locks, sent = FakeLocks(), []
     for mod in (tree_runner, route_planner, traffic):
         monkeypatch.setattr(mod, "table", lambda name: tables[name])
         monkeypatch.setattr(mod, "publish", lambda topic, payload: sent.append((topic, payload)))
     monkeypatch.setattr(traffic, "LOCKS", locks)
+    objects = {}
+
+    class FakeS3:
+        def put_object(self, Bucket, Key, Body, **_):
+            objects[Key] = Body
+
+    monkeypatch.setattr(tree_runner, "s3", lambda: FakeS3())
+    monkeypatch.setenv("DATA_BUCKET", "test-bucket")
+    tables["_s3"] = objects
     return tables, locks, sent
+
+
+def last_status(sent, task_id):
+    return [p for t, p in sent if t == f"tasks/{task_id}/status"][-1]
 
 
 def paths(sent, fid):

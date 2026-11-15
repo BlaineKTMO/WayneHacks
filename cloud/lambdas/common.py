@@ -8,6 +8,14 @@ import boto3
 
 _ddb = boto3.resource("dynamodb")
 _iot = None
+_s3 = None
+
+
+def s3():
+    global _s3
+    if _s3 is None:
+        _s3 = boto3.client("s3")
+    return _s3
 
 
 def table(env_name: str):

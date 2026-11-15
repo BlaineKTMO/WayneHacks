@@ -78,6 +78,7 @@ class FleetStack(Stack):
             "EDGE_LOCKS_TABLE": edge_locks.table_name,
             "PALLETS_TABLE": pallets.table_name,
             "PLANNERS_TABLE": planners.table_name,
+            "EPISODES_TABLE": episodes.table_name,
             "DATA_BUCKET": bucket.bucket_name,
             "IOT_ENDPOINT": endpoint,
         }
@@ -112,6 +113,8 @@ class FleetStack(Stack):
         tasks.grant_read_write_data(ingest)
         pallets.grant_read_write_data(ingest)  # tree runner updates pallet locations on Pick/Drop
         edge_locks.grant_read_write_data(ingest)  # traffic control: reservations
+        episodes.grant_write_data(ingest)         # tree runner records episodes
+        bucket.grant_put(ingest, "episodes/*")
         ingest.add_to_role_policy(publish_policy)
 
         planner = fn("RoutePlanner", "route_planner.handler")
@@ -124,8 +127,10 @@ class FleetStack(Stack):
         tasks.grant_read_write_data(dispatch)
         forklifts.grant_read_write_data(dispatch)
         pallets.grant_read_write_data(dispatch)
-        planners.grant_read_data(dispatch)
+        planners.grant_read_write_data(dispatch)  # shadow win/run counters
         edge_locks.grant_read_write_data(dispatch)
+        episodes.grant_write_data(dispatch)
+        bucket.grant_put(dispatch, "episodes/*")
         dispatch.add_to_role_policy(publish_policy)
         # Ring 3: Claude on Bedrock writes behavior trees. Converse = bedrock:InvokeModel.
         # `us.` inference profiles route to Claude models in US Regions, so the foundation-model
